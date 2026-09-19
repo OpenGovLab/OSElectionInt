@@ -8,7 +8,7 @@
 
 *All 135 OpenElections repositories, mirrored and synced 6-hourly, as the certified-results spine.*
 
-[**▶ Live demo**](https://app.perspectivity.co/hackathon/election/) · [Demo video](#demo-video) · [Quick start](#quick-start) · [Architecture](#architecture)
+[**▶ Live demo**](https://app.perspectivity.co/hackathon/election/) · [**Demo video**](https://www.loom.com/share/6bd563ab9ac54b7a86fc7d82ba513f97) · [Quick start](#quick-start) · [Architecture](#architecture)
 
 `146,355` contests · `39,396` candidates · `216,822` polling places · `3,235` counties · `38 cycles, 1976–2026`
 
@@ -348,8 +348,15 @@ scripts/                            ETL + portrait backfill
 
 ## Demo video
 
-> **📹 [Add Loom link here]** — 2–5 min, showing: splash → globe → Texas Senate race →
-> challenger panel → timeline scrub → polling places.
+**▶ [Watch the demo on Loom](https://www.loom.com/share/6bd563ab9ac54b7a86fc7d82ba513f97)**
+
+<a href="https://www.loom.com/share/6bd563ab9ac54b7a86fc7d82ba513f97">
+  <img src="docs/screenshots/03-texas-senate.png" alt="Watch the OSElectionInt demo on Loom" width="100%">
+</a>
+
+The core loop, live: boot cartogram → globe → hover a state for certified turnout and the top two
+finishers → the 2026 Texas Senate race with challengers ranked by money raised → timeline scrub
+across 38 cycles → historical polling places.
 
 ## Team
 
