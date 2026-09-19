@@ -1,0 +1,12 @@
+{
+  "name": "electionintos",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone US election intelligence dashboard",
+  "scripts": {
+    "build": "cd web && npm run build",
+    "start": "cd server && npm start",
+    "dev:web": "cd web && npm run dev",
+    "dev:server": "cd server && npm run dev"
+  }
+}
