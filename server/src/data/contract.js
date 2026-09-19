@@ -75,6 +75,16 @@
  * @property {(a: {cycle:number}) => Promise<Object>} candidatePlaces
  * @property {(a: {limit:number}) => Promise<Object>} newsPoints
  *
+ * @property {(a: {ocdId?:string, limit:number}) => Promise<Array<{
+ *   ocd_id:string, name:string|null, state:string|null, title:string,
+ *   url:string, image:string|null, source:string|null,
+ *   published_at:string|null, person:string|null, party:string|null,
+ *   office:string|null, tilt:number|null, left:number, center:number,
+ *   right:number, total_sources:number|null }>>} newsArticles
+ *   Individual stories for the card rail, newest first. Order by `matched_at`
+ *   — `published_at` is the relative string the source rendered ("2 hours
+ *   ago"), kept for display and useless for sorting.
+ *
  * @property {(a: {bbox:number[], limit:number}) => Promise<Object>} pollingPoints
  *   bbox is [west, south, east, north]. Mongo answers with 2dsphere, Postgres
  *   with PostGIS; both return the same FeatureCollection.

@@ -441,6 +441,64 @@ async function candidatePlaces({ cycle, limit }) {
   });
 }
 
+/**
+ * Individual articles, newest first, for the card rail under the map.
+ *
+ * Sorted on `matched_at`, NOT `published_at`. `published_at` in this
+ * collection is the relative string Google News rendered at scrape time —
+ * "2 hours ago", "9 hours ago" — so it sorts alphabetically into nonsense and
+ * ages silently once stored. It is still what the UI displays, because it is
+ * what the source said; `matched_at` is the real ISO timestamp and the only
+ * thing worth ordering by.
+ *
+ * Division names are joined in a second query rather than a $lookup: the
+ * result set is one page of cards, so the id list is short and a lookup
+ * across the whole collection would cost more than it saves.
+ */
+async function newsArticles({ ocdId, limit }) {
+  const q = ocdId ? { ocd_id: ocdId } : {};
+  const rows = await M(TABLES.news)
+    .find(q, {
+      _id: 0, ocd_id: 1, title: 1, url: 1, image: 1, source: 1,
+      published_at: 1, matched_at: 1, person: 1, party: 1, office: 1,
+      total_sources: 1, spectrum: 1,
+    })
+    .sort({ matched_at: -1 })
+    .limit(limit)
+    .lean();
+  if (!rows.length) return [];
+
+  const ids = [...new Set(rows.map((r) => r.ocd_id).filter(Boolean))];
+  const divs = await M(TABLES.divisions).collection
+    .find({ _id: { $in: ids } }, { projection: { name: 1, state: 1 } })
+    .toArray();
+  const byId = new Map(divs.map((d) => [d._id, d]));
+
+  return rows.map((r) => {
+    const sp = r.spectrum || {};
+    const d = byId.get(r.ocd_id) || {};
+    return {
+      ocd_id: r.ocd_id,
+      name: d.name || null,
+      state: d.state || null,
+      title: r.title,
+      url: r.url,
+      image: r.image || null,
+      source: r.source || null,
+      // Verbatim from the source. Not a date — see above.
+      published_at: r.published_at || null,
+      person: r.person || null,
+      party: r.party || null,
+      office: r.office || null,
+      tilt: sp.tilt === undefined ? null : sp.tilt,
+      left: sp.left ?? 0,
+      center: sp.center ?? 0,
+      right: sp.right ?? 0,
+      total_sources: r.total_sources ?? null,
+    };
+  });
+}
+
 async function newsPoints({ limit }) {
   const grouped = await M(TABLES.news).aggregate([
     { $group: {
@@ -607,6 +665,7 @@ module.exports = {
   racePoints,
   candidatePlaces,
   newsPoints,
+  newsArticles,
   pollingPoints,
   voterInfo,
   capabilities,

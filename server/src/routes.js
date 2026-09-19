@@ -12,6 +12,7 @@ const {
   getRacePoints,
   getDivisionPoints,
   getNewsPoints,
+  getNewsArticles,
   getCandidatePlaces,
   getCapabilities,
   getStats,
@@ -46,6 +47,8 @@ router.get("/races", longCache, getRacePoints);
 router.get("/division-points", longCache, getDivisionPoints);
 // Election coverage as map points, keyed by the person each story names.
 router.get("/news-points", longCache, getNewsPoints);
+// The stories behind the rings — image, headline, source, coverage lean.
+router.get("/news-articles", longCache, getNewsArticles);
 // Candidate home towns, grouped by city — real coordinates, not centroids.
 router.get("/candidate-places", longCache, getCandidatePlaces);
 router.get("/search", longCache, searchPeople);

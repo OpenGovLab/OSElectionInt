@@ -346,6 +346,28 @@ exports.getCapabilities = async (req, res) => {
  * Henry Cuellar belongs on TX-28. "Texas sues California" is about neither
  * place in the way a map would imply.
  */
+/**
+ * GET /api/us-election/news-articles?ocd_id=&limit=
+ *
+ * The stories themselves, for the rail under the map. news-points answers
+ * "where is there coverage"; this answers "what does it say".
+ *
+ * `published_at` is passed through verbatim as the relative string the source
+ * rendered it with. It is deliberately not converted to a date: the scrape
+ * captured "2 hours ago" at a moment we no longer know precisely, so turning
+ * it into a timestamp would invent precision. Ordering uses matched_at.
+ */
+exports.getNewsArticles = async (req, res) => {
+  try {
+    const limit = clampInt(req.query.limit, 40, 1, 200);
+    const ocdId = req.query.ocd_id ? String(req.query.ocd_id) : undefined;
+    const rows = await repo.newsArticles({ ocdId, limit });
+    res.json({ success: true, data: { count: rows.length, rows } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 exports.getNewsPoints = async (req, res) => {
   try {
     const limit = clampInt(req.query.limit, 400, 1, 2000);
