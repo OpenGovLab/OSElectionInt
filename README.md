@@ -353,9 +353,15 @@ scripts/                            ETL + portrait backfill
 
 ## Team
 
+**Solo build.**
+
 | Name | Role | Contact |
 |---|---|---|
-| _[add]_ | _[add]_ | _[add]_ |
+| **Abdullah Khan Zehady** | Everything — data pipeline, backend, frontend, design | [support@perspectivity.co](mailto:support@perspectivity.co) · [OpenGovLab](https://github.com/OpenGovLab) |
+
+One person across the whole stack: the Python ingest that normalises 135 OpenElections
+repositories onto OCD division IDs, the PMTiles build, the dual-backend API, the MapLibre client,
+and the visual design.
 
 ---
 
