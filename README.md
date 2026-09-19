@@ -61,6 +61,15 @@ buried in FEC bulk data and becomes the first thing you see.
   In the 2026 Texas Senate race that reads: challengers **$99.6M** to sitting members **$18.8M**.
 - **Head-to-head results.** The last contest as a versus card — two portraits, an animated
   tug-of-war bar, raw votes, certified margin.
+- **Ask it anything.** A grounded Q&A panel answers in natural language straight from the corpus and
+  cites the rows it used. It inherits the same honesty rules as the UI — ask who is running in Texas
+  and it names the leading filers by money raised, then tells you unprompted that filing with the FEC
+  is not the same as being on the ballot.
+- **⌘K command bar, by text or voice.** *"fly to Texas"*, *"show senate"*, *"2016"*, *"play timeline"*,
+  *"satellite"*. Deliberately **not** an LLM: a fixed grammar parses it, every command prints a receipt
+  saying what actually happened, and anything it does not recognise is declined rather than guessed —
+  a navigation control acting on a half-understood instruction is worse than one that says no. Speech
+  drops its transcript into the input for you to read and submit, never auto-fires.
 - **216,822 historical polling places**, geocoded and placed, with an aerial thumbnail of the building.
 - **Voter information** — state election office links for all 50 states.
 - **Two interchangeable databases.** MongoDB or Supabase/Postgres, selected by one env var.
