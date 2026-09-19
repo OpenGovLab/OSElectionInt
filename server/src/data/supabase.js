@@ -33,7 +33,13 @@ const PAGE = 1000;
 
 function client() {
   const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+  // SUPABASE_SERVICE_KEY is accepted as an alias: the dashboard labels this
+  // "service_role" while most docs and .env files shorten it, and pairing a
+  // local URL with a cloud key fails as "No suitable key or wrong key type"
+  // — which names neither the variable nor the mismatch.
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+    || process.env.SUPABASE_SERVICE_KEY
+    || process.env.SUPABASE_ANON_KEY;
   if (!url || !key) {
     throw new Error(
       "Supabase backend selected but not configured. Set SUPABASE_URL and "
