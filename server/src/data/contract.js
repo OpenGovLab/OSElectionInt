@@ -1,7 +1,7 @@
 /**
  * The data-access contract.
  *
- * ElectionIntOS reads the same election corpus from either MongoDB or
+ * OSElectionInt reads the same election corpus from either MongoDB or
  * Supabase (Postgres). Which one is a deployment choice, not a code change:
  * set DATA_BACKEND=mongo|supabase and nothing above this layer moves.
  *

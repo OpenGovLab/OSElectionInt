@@ -27,5 +27,11 @@
     "baseUrl": ".",
     "paths": { "@/*": ["./src/*"] }
   },
-  "include": ["src"]
+  "include": ["src"],
+  /* Test files are excluded from the app build. They import node:test and
+     node:assert, which need @types/node, and there is no runner wired yet —
+     pulling Node's types into a browser bundle's typecheck to satisfy a file
+     the bundle never includes is the wrong trade. Point a runner (vitest
+     reuses vite.config.ts, alias included) at them when one is added. */
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
 }

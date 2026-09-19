@@ -8,7 +8,7 @@ import { defineConfig } from "vite";
  * time because it writes asset URLs into index.html; a runtime guess would
  * work until the first hard refresh on a deep link.
  *
- * The dev server proxies /api and /tiles to the ElectionIntOS server, so the
+ * The dev server proxies /api and /tiles to the OSElectionInt server, so the
  * app talks to the same origin in development as it does in production.
  * Without that, dev would need CORS and absolute URLs that production does
  * not — exactly the difference that hides bugs until deploy.

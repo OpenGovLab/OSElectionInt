@@ -1,4 +1,4 @@
--- ElectionIntOS — RPC functions
+-- OSElectionInt — RPC functions
 --
 -- The aggregate-shaped contract methods. PostgREST can express a filter and a
 -- sort but not a two-stage group-and-slice, so these live as functions called

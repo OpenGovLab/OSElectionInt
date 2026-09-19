@@ -1,4 +1,4 @@
--- ElectionIntOS — read views
+-- OSElectionInt — read views
 --
 -- centroid is geography(Point,4326). PostgREST serialises PostGIS columns as
 -- hex EWKB, not as GeoJSON, so selecting `centroid` over the Data API hands

@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 
 /**
- * ElectionIntOS is dark, always.
+ * OSElectionInt is dark, always.
  *
  * The parent app follows the reader's OS preference because it is a news site
  * and a light reading surface is a legitimate choice there. This is a console:

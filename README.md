@@ -1,6 +1,6 @@
 <div align="center">
 
-# ElectionIntOS
+# OSElectionInt
 
 **An explore-first map of American elections — certified results, live filings, and the people running.**
 
@@ -14,7 +14,7 @@
 
 <br/>
 
-<img src="docs/screenshots/03-texas-senate.png" alt="ElectionIntOS — the 2026 Texas Senate race, challengers ranked by money raised" width="100%">
+<img src="docs/screenshots/03-texas-senate.png" alt="OSElectionInt — the 2026 Texas Senate race, challengers ranked by money raised" width="100%">
 
 <sub><i>The 2026 Texas Senate race. Challengers lead the panel; the two sitting senators are demoted below them.</i></sub>
 

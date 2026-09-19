@@ -30,7 +30,7 @@ import urllib.parse
 import urllib.request
 
 API = "https://www.wikidata.org/w/api.php"
-UA = "ElectionIntOS-portrait-backfill/1.0 (civic data; contact via repo)"
+UA = "OSElectionInt-portrait-backfill/1.0 (civic data; contact via repo)"
 
 # Occupation (P106) / position (P39) / party (P102) values that mark a hit as
 # a plausible US political figure.

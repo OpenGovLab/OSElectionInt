@@ -1,4 +1,4 @@
--- ElectionIntOS — election corpus schema
+-- OSElectionInt — election corpus schema
 --
 -- Mirrors the MongoDB collections written by python/us_election so the same
 -- dashboard can read from either engine (see server/src/data/contract.js).

@@ -121,7 +121,7 @@ export function ChromeHeader() {
       {/* wordmark */}
       <div className="pointer-events-auto flex items-baseline gap-3">
         <span className="font-mono text-[15px] font-semibold tracking-[0.36em] text-slate-100">
-          ELECTION<span className="text-cyan-300">INT</span>OS
+          <span className="text-cyan-300">OS</span>ELECTION<span className="text-cyan-300">INT</span>
         </span>
         <span className="hidden font-mono text-[9px] uppercase tracking-[0.3em] text-slate-500 md:inline">
           Open Election Data

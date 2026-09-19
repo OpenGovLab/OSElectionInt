@@ -6,7 +6,7 @@ const express = require("express");
 const routes = require("./routes");
 
 /**
- * ElectionIntOS — the US election dashboard, standalone.
+ * OSElectionInt — the US election dashboard, standalone.
  *
  * One process serves both halves: the API under /api/us-election, and the
  * built web app as static files with an SPA fallback. The parent deployment
@@ -66,6 +66,6 @@ if (fs.existsSync(dist)) {
 }
 
 app.listen(PORT, () => {
-  console.log(`[ElectionIntOS] http://localhost:${PORT}`);
-  console.log(`[ElectionIntOS] tiles proxied from ${TILES_ORIGIN}`);
+  console.log(`[OSElectionInt] http://localhost:${PORT}`);
+  console.log(`[OSElectionInt] tiles proxied from ${TILES_ORIGIN}`);
 });

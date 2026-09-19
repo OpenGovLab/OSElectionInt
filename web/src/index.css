@@ -14,50 +14,50 @@ html, body, #root { height: 100%; margin: 0; }
    final colour for one frame before its delay starts, and the whole map
    appears at once instead of rolling across.                              */
 
-@keyframes eios-call {
+@keyframes osei-call {
   from { background: #0f172a; color: transparent; transform: scale(0.82); }
   60%  { transform: scale(1.06); }
   to   { background: var(--fill); color: var(--ink); transform: scale(1); }
 }
-.eios-cell {
+.osei-cell {
   background: #0f172a;
   color: transparent;
-  animation: eios-call 0.6s cubic-bezier(0.34, 1.4, 0.64, 1) both;
+  animation: osei-call 0.6s cubic-bezier(0.34, 1.4, 0.64, 1) both;
 }
 
-@keyframes eios-rise {
+@keyframes osei-rise {
   from { opacity: 0; transform: translateY(14px); filter: blur(6px); }
   to   { opacity: 1; transform: none; filter: blur(0); }
 }
-.eios-letter { display: inline-block; animation: eios-rise 0.5s ease-out both; }
+.osei-letter { display: inline-block; animation: osei-rise 0.5s ease-out both; }
 
-@keyframes eios-fade { from { opacity: 0; } to { opacity: 1; } }
-.eios-sub { animation: eios-fade 0.7s ease-out both; }
+@keyframes osei-fade { from { opacity: 0; } to { opacity: 1; } }
+.osei-sub { animation: osei-fade 0.7s ease-out both; }
 
-@keyframes eios-count { from { width: 0%; } to { width: 100%; } }
-.eios-bar { animation: eios-count 3s cubic-bezier(0.22, 1, 0.36, 1) both; animation-delay: 0.6s; }
+@keyframes osei-count { from { width: 0%; } to { width: 100%; } }
+.osei-bar { animation: osei-count 3s cubic-bezier(0.22, 1, 0.36, 1) both; animation-delay: 0.6s; }
 
 /* Respect a reader who has asked the OS for less motion: show the finished
    state immediately rather than a 3-second animation they did not want. */
 @media (prefers-reduced-motion: reduce) {
-  .eios-cell, .eios-letter, .eios-sub, .eios-bar { animation-duration: 0.01s; animation-delay: 0s; }
+  .osei-cell, .osei-letter, .osei-sub, .osei-bar { animation-duration: 0.01s; animation-delay: 0s; }
 }
 
 /* An answer arrives whole, so it fades in whole. Deliberately not a
    typewriter: staging a token-by-token reveal would imply the model is
    generating live in front of the reader when the response is already
    complete in hand. */
-@keyframes eios-answer-in {
+@keyframes osei-answer-in {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: none; }
 }
-.eios-answer { animation: eios-answer-in 260ms ease-out both; }
+.osei-answer { animation: osei-answer-in 260ms ease-out both; }
 
 /* The news rail scrolls horizontally; a visible scrollbar under a row of
    cards reads as chrome rather than content. */
-.eios-rail::-webkit-scrollbar { height: 0; }
-.eios-rail { scrollbar-width: none; }
+.osei-rail::-webkit-scrollbar { height: 0; }
+.osei-rail { scrollbar-width: none; }
 
 @media (prefers-reduced-motion: reduce) {
-  .eios-answer { animation: none; }
+  .osei-answer { animation: none; }
 }

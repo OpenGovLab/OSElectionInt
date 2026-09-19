@@ -317,7 +317,7 @@ export default function ElectionChat({
             // A fade-in, not a typewriter. The response arrives whole, and
             // animating it character by character would be staging a live
             // generation that is not happening.
-            <div key={i} className="eios-answer">
+            <div key={i} className="osei-answer">
               <div className="mb-1 flex items-center gap-1.5">
                 <span className="h-1 w-1 rounded-full bg-cyan-400" />
                 <span className="font-mono text-[8.5px] uppercase tracking-[0.2em] text-cyan-600/80 dark:text-cyan-400/70">

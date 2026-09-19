@@ -11,7 +11,7 @@ const { TABLES, LEVEL_OCD_PATTERN } = require("./contract");
  * the wrong Begich on the page once already. Moving them must not reword them.
  *
  * db.js takes only a collection name; the lang/country arguments the
- * controller used to pass were always ignored (ElectionIntOS is single
+ * controller used to pass were always ignored (OSElectionInt is single
  * tenant), so they are simply not passed on.
  */
 

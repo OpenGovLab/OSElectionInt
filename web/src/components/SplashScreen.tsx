@@ -4,7 +4,7 @@ import { apiService } from "@/lib/api";
 import { MARGIN_STOPS } from "@/config/usElectionMap";
 
 /**
- * Boot screen for ElectionIntOS.
+ * Boot screen for OSElectionInt.
  *
  * The structure is borrowed from OSIRIS — a full-bleed overlay that holds for
  * a couple of seconds and fades — but nothing else is. OSIRIS opens on a
@@ -189,7 +189,7 @@ export default function SplashScreen({ onDone }: { onDone: () => void }) {
           {cells.map(({ code, col, row, margin, delay }) => (
             <div
               key={code}
-              className="eios-cell flex items-center justify-center rounded-[3px] font-mono text-[9px] font-semibold"
+              className="osei-cell flex items-center justify-center rounded-[3px] font-mono text-[9px] font-semibold"
               style={{
                 gridColumn: col + 1,
                 gridRow: row + 1,
@@ -208,10 +208,10 @@ export default function SplashScreen({ onDone }: { onDone: () => void }) {
 
         {/* ── wordmark ── */}
         <div className="flex items-baseline">
-          {"ElectionIntOS".split("").map((ch, i) => (
+          {"OSElectionInt".split("").map((ch, i) => (
             <span
               key={i}
-              className="eios-letter text-3xl font-semibold tracking-tight text-slate-100 md:text-4xl"
+              className="osei-letter text-3xl font-semibold tracking-tight text-slate-100 md:text-4xl"
               style={{ animationDelay: `${1.15 + i * 0.05}s` }}
             >
               {ch}
@@ -219,21 +219,21 @@ export default function SplashScreen({ onDone }: { onDone: () => void }) {
           ))}
         </div>
 
-        <p className="eios-sub mt-3 font-mono text-[10px] uppercase tracking-[0.42em] text-sky-300/70"
+        <p className="osei-sub mt-3 font-mono text-[10px] uppercase tracking-[0.42em] text-sky-300/70"
            style={{ animationDelay: "1.95s" }}>
           Open Election Data
         </p>
 
         {/* ── what is actually in the archive ── */}
         <div className="mt-8 flex items-center gap-7 font-mono text-[10px] tracking-wider text-slate-400">
-          <span className="eios-sub" style={{ animationDelay: "2.05s" }}>
+          <span className="osei-sub" style={{ animationDelay: "2.05s" }}>
             <b className="block text-center text-base font-semibold tabular-nums text-slate-100">
               {counted.toLocaleString()}
             </b>
             contests
           </span>
           <span className="h-7 w-px bg-slate-700" />
-          <span className="eios-sub" style={{ animationDelay: "2.15s" }}>
+          <span className="osei-sub" style={{ animationDelay: "2.15s" }}>
             <b className="block text-center text-base font-semibold tabular-nums text-slate-100">
               {places.toLocaleString()}
             </b>
@@ -243,7 +243,7 @@ export default function SplashScreen({ onDone }: { onDone: () => void }) {
 
         {/* ── returns bar ── */}
         <div className="mt-8 h-[2px] w-60 overflow-hidden rounded-full bg-slate-800 md:w-72">
-          <div className="eios-bar h-full rounded-full"
+          <div className="osei-bar h-full rounded-full"
                style={{ background: "linear-gradient(90deg,#2563eb,#e2e8f0,#dc2626)" }} />
         </div>
         <p className="mt-3 font-mono text-[9px] tracking-[0.3em] text-slate-500">
@@ -251,7 +251,7 @@ export default function SplashScreen({ onDone }: { onDone: () => void }) {
         </p>
       </div>
 
-      <p className="eios-sub absolute bottom-12 left-0 right-0 text-center font-mono text-[9px] tracking-[0.3em] text-slate-600"
+      <p className="osei-sub absolute bottom-12 left-0 right-0 text-center font-mono text-[9px] tracking-[0.3em] text-slate-600"
          style={{ animationDelay: "4.0s" }}>
         PRESS ANY KEY TO ENTER
       </p>

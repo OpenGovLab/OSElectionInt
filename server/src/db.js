@@ -5,7 +5,7 @@ const mongoose = require("mongoose");
  *
  * The parent app is multi-tenant: it keeps several connections and picks one
  * per request from an X-Site header, which is why every query there routes
- * through getModelForLanguage(collection, lang, country). ElectionIntOS serves
+ * through getModelForLanguage(collection, lang, country). OSElectionInt serves
  * a single tenant, so that indirection would be ceremony — but the controller
  * is copied from there and calls it on every query, so the shape is kept and
  * the arguments are ignored. Keeping the signature means the controller can be

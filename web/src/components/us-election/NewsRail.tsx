@@ -164,7 +164,7 @@ export default function NewsRail({
           {rows.length} {rows.length === 1 ? "story" : "stories"} · newest first
         </span>
       </div>
-      <div className="eios-rail flex gap-2 overflow-x-auto pb-1">
+      <div className="osei-rail flex gap-2 overflow-x-auto pb-1">
         {rows.map((a, i) => (
           <Card key={`${a.ocd_id}-${a.url || i}`} a={a} onOpen={onOpen} onHover={onHover} />
         ))}
