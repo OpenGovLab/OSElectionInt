@@ -38,6 +38,8 @@ import DivisionDetail, { type Holder as DetailHolder }
   from "@/components/us-election/DivisionDetail";
 import CandidateDetail from "@/components/us-election/CandidateDetail";
 import ElectionChat from "@/components/us-election/ElectionChat";
+import NewsRail, { type NewsArticle }
+  from "@/components/us-election/NewsRail";
 import PersonDetail from "@/components/us-election/PersonDetail";
 import Portrait from "@/components/us-election/Portrait";
 import {
@@ -377,7 +379,15 @@ export default function USElectionPage({
   const [newsTip, setNewsTip] = useState<{
     x: number; y: number; name: string; articles: number;
     people: string; tilt: number | null; headline: string;
+    image?: string | null; source?: string; published?: string;
   } | null>(null);
+  // The article rows behind the coverage layer. Fetched once per toggle and
+  // shared by the rail AND the ring hover — news-points carries no image or
+  // outlet, so the hover reads the top article for its division from here
+  // rather than the map feature.
+  const [newsRows, setNewsRows] = useState<NewsArticle[]>([]);
+  const newsByDivRef = useRef<Map<string, NewsArticle>>(new Map());
+  const newsHoverRef = useRef<string | null>(null);
   const [pollTip, setPollTip] = useState<{
     x: number; y: number; name: string; address: string; year: number;
     kind: string; county: string; exact: boolean; lat: number; lng: number;
@@ -712,8 +722,12 @@ export default function USElectionPage({
         });
       }
       // ── contested races, as circles at division centroids ──────────────
+      // promoteId: hovering a card in the rail lights the matching ring, and
+      // feature-state has to be keyed by something stable to do it. Without
+      // this, GeoJSON features get tile-local numeric ids the rail cannot know.
       map.addSource(NEWS_SOURCE, {
         type: "geojson",
+        promoteId: "ocd_id",
         data: { type: "FeatureCollection", features: [] },
       });
       map.addSource(POLLS_SOURCE, {
@@ -826,8 +840,13 @@ export default function USElectionPage({
         paint: {
           "circle-color": "transparent",
           "circle-radius": newsRadius() as never,
-          "circle-stroke-width": 2,
-          "circle-stroke-color": "#f59e0b",
+          "circle-stroke-width": [
+            "case", ["boolean", ["feature-state", "hover"], false], 4, 2,
+          ] as never,
+          "circle-stroke-color": [
+            "case", ["boolean", ["feature-state", "hover"], false],
+            "#fcd34d", "#f59e0b",
+          ] as never,
           "circle-stroke-opacity": 0.95,
         },
       });
@@ -1174,6 +1193,66 @@ export default function USElectionPage({
     return () => { alive = false; };
   }, [ready, styleEpoch, overlays.news]);
 
+  // ── the stories themselves, for the rail and the hover ──────────────
+  useEffect(() => {
+    if (!overlays.news) {
+      setNewsRows([]);
+      newsByDivRef.current = new Map();
+      return;
+    }
+    let alive = true;
+    apiService({ method: "get", url: "/us-election/news-articles?limit=40" })
+      .then((r) => {
+        if (!alive) return;
+        const rows = ((r as { data?: { data?: { rows?: NewsArticle[] } } })
+          ?.data?.data?.rows ?? []);
+        setNewsRows(rows);
+        // First row per division wins — the payload is newest-first, so that
+        // is the most recent story for that place.
+        const m = new Map<string, NewsArticle>();
+        for (const a of rows) if (a.ocd_id && !m.has(a.ocd_id)) m.set(a.ocd_id, a);
+        newsByDivRef.current = m;
+      })
+      .catch(() => { if (alive) setNewsRows([]); });
+    return () => { alive = false; };
+  }, [overlays.news]);
+
+  /** Open a division from outside the map — used by the rail. */
+  const openDivision = useCallback((ocdId: string, name: string, state: string) => {
+    const map = mapRef.current;
+    const m = marginsRef.current.get(ocdId);
+    const row: Row = {
+      ocd_id: ocdId, name, state,
+      margin: m ? m.margin : null, winner: m?.winner_party,
+      holders: holdersRef.current.get(ocdId),
+    };
+    setSelected(row);
+    setDetail(row);
+    setSheetOpen(true);
+    // Fly to it if we know where it is.
+    //
+    // NEWS_SOURCE is tried first because the rail only ever lists divisions
+    // that HAVE coverage, which is exactly that source's contents — so it is
+    // the tightest match. LABEL_SOURCE (every division's centroid) is the
+    // fallback. Both are GeoJSON, and querySourceFeatures only sees loaded
+    // tiles, so a division far outside the current view can legitimately
+    // return nothing; the panel still opens, the camera just stays put.
+    const find = (src: string) => {
+      try {
+        const hit = (map?.querySourceFeatures(src) ?? []).find((f) =>
+          (f.properties as { ocd_id?: string } | null)?.ocd_id === ocdId);
+        return (hit?.geometry as { coordinates?: [number, number] } | undefined)
+          ?.coordinates;
+      } catch {
+        return undefined;
+      }
+    };
+    const c = find(NEWS_SOURCE) ?? find(LABEL_SOURCE);
+    if (map && c) {
+      map.flyTo({ center: c, zoom: Math.max(map.getZoom(), 4.5), duration: 1200 });
+    }
+  }, []);
+
   // clicking a news ring opens that division
   useEffect(() => {
     const map = mapRef.current;
@@ -1189,12 +1268,16 @@ export default function USElectionPage({
       map.getCanvas().style.cursor = "pointer";
       const p = (e.features?.[0]?.properties || {}) as Record<string, string>;
       if (p.ocd_id) {
+        const top = newsByDivRef.current.get(p.ocd_id);
         setNewsTip({
           x: e.point.x, y: e.point.y, name: p.name,
           articles: Number(p.articles || 0),
           people: String(p.people || ""),
           tilt: p.tilt === undefined || p.tilt === null ? null : Number(p.tilt),
           headline: String(p.headline || ""),
+          image: top?.image ?? null,
+          source: top?.source,
+          published: top?.published_at,
         });
       }
     };
@@ -2088,10 +2171,30 @@ export default function USElectionPage({
               {newsTip.articles} {newsTip.articles === 1 ? "story" : "stories"}
             </span>
           </div>
+          {newsTip.image && (
+            <img
+              src={newsTip.image}
+              alt=""
+              loading="lazy"
+              className="mt-1.5 h-24 w-full rounded bg-slate-200 object-cover dark:bg-slate-800"
+              onError={(ev) => { ev.currentTarget.style.display = "none"; }}
+            />
+          )}
           {newsTip.headline && (
-            <p className="mt-0.5 line-clamp-2 text-[10px] leading-snug text-slate-600 dark:text-slate-300">
+            <p className="mt-1 line-clamp-2 text-[10px] font-medium leading-snug text-slate-700 dark:text-slate-200">
               {newsTip.headline}
             </p>
+          )}
+          {(newsTip.source || newsTip.published) && (
+            <div className="mt-0.5 flex items-baseline justify-between gap-2 text-[9px]">
+              <span className="truncate text-amber-700 dark:text-amber-400/90">
+                {newsTip.source}
+              </span>
+              {/* Relative string straight from the feed — never parsed. */}
+              <span className="shrink-0 font-mono uppercase tracking-[0.1em] text-slate-400">
+                {newsTip.published}
+              </span>
+            </div>
           )}
           <div className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">
             {newsTip.people}
@@ -2147,10 +2250,41 @@ export default function USElectionPage({
           requestAnimationFrame(() =>
             containerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
         }}
-        className="absolute bottom-10 right-3 z-30 flex items-center gap-1.5 rounded-[3px] border border-cyan-400/50 bg-cyan-400/10 px-3.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.18em] text-cyan-200 backdrop-blur transition-colors hover:bg-cyan-400/20 md:bottom-auto md:right-[24rem] md:top-12"
+        title="Ask a question about this data (grounded in the records on screen)"
+        /* Solid cyan on dark, not cyan-on-cyan. The translucent version read
+           as a disabled control; this is the primary action on the page and
+           the panel behind it actually answers now, so it should look like
+           the thing you are meant to press. */
+        className="absolute bottom-10 right-3 z-30 flex items-center gap-2 rounded-[4px] bg-cyan-400 px-4 py-2 font-mono text-[12.5px] font-semibold uppercase tracking-[0.1em] text-slate-950 shadow-[0_0_20px_rgba(34,211,238,0.35)] transition-colors hover:bg-cyan-300 md:bottom-auto md:right-[24rem] md:top-12"
       >
+        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 11.5a8.4 8.4 0 01-9 8.4 8.4 8.4 0 01-3.8-.9L3 21l1.9-5.2A8.4 8.4 0 0112 3a8.4 8.4 0 019 8.5z" />
+          <path d="M12 8v.01M12 11v3" />
+        </svg>
         Ask
       </button>
+
+      {/* the coverage layer, as stories. Sits above the legend and scrubber
+          (bottom-9) and stops short of the side panel. */}
+      <NewsRail
+        rows={newsRows}
+        open={!!overlays.news}
+        onOpen={(a) => openDivision(a.ocd_id, a.name, a.state)}
+        onHover={(ocdId) => {
+          const map = mapRef.current;
+          if (!map || !map.isStyleLoaded()) return;
+          // Feature-state on the news source, keyed by the same promoted id
+          // the rings are drawn from, so hovering a card lights its ring.
+          if (newsHoverRef.current) {
+            map.removeFeatureState(
+              { source: NEWS_SOURCE, id: newsHoverRef.current }, "hover");
+          }
+          newsHoverRef.current = ocdId;
+          if (ocdId) {
+            map.setFeatureState({ source: NEWS_SOURCE, id: ocdId }, { hover: true });
+          }
+        }}
+      />
 
       {/* timeline scrubber */}
       {timeline.length > 1 && (
