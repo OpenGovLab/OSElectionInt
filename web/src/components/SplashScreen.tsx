@@ -137,7 +137,15 @@ export default function SplashScreen({ onDone }: { onDone: () => void }) {
   // Anyone who has seen it once can leave early. A splash that cannot be
   // dismissed stops being an introduction and becomes a toll.
   useEffect(() => {
-    const skip = () => { setLeaving(true); setTimeout(onDone, 400); };
+    // Ignore modified keys. ⌘K is the command panel: without this it both
+    // dismissed the splash and opened the panel, so the app's first frame was
+    // a dialog over a half-faded boot screen.
+    const skip = (e: Event) => {
+      const k = e as KeyboardEvent;
+      if (k.metaKey || k.ctrlKey || k.altKey) return;
+      setLeaving(true);
+      setTimeout(onDone, 400);
+    };
     window.addEventListener("keydown", skip);
     window.addEventListener("pointerdown", skip);
     return () => {
