@@ -403,6 +403,31 @@ export default function USElectionPage({
   const levelMeta = useMemo(() => LEVELS.find((l) => l.id === level)!, [level]);
   const outOfBand = zoom < levelMeta.minzoom || zoom > levelMeta.maxzoom;
 
+  /**
+   * Never strand the reader on a level with no geometry at this zoom.
+   *
+   * The archive writes each level over a fixed zoom band — state stops at z6,
+   * cd at z10 — and MapLibre does NOT overzoom past that, because the higher
+   * tiles genuinely exist and simply contain no features for that layer. So a
+   * level held past its band renders an empty map: black, silent, and easy to
+   * read as "there is no data here" when the truth is "you are looking at the
+   * wrong layer for this zoom".
+   *
+   * Auto-level already avoids this. This is the manual path — someone pinned
+   * a level, then kept zooming. Rather than paint nothing under a banner, fall
+   * back to the closest in-band level the current office actually supports.
+   */
+  useEffect(() => {
+    if (!ready || autoLevel || !outOfBand) return;
+    const inBand = allowedLevels.filter(
+      (l) => zoom >= l.minzoom && zoom <= l.maxzoom,
+    );
+    if (!inBand.length) return;
+    // Deepest level that covers this zoom — zooming in should reveal more.
+    const want = inBand[inBand.length - 1];
+    if (want.id !== level) setLevel(want.id);
+  }, [ready, autoLevel, outOfBand, allowedLevels, zoom, level]);
+
   const levelRef = useRef(level);
   useEffect(() => { levelRef.current = level; }, [level]);
   const marginsRef = useRef(margins);
