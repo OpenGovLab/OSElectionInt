@@ -12,6 +12,12 @@
 
 `146,355` contests · `39,396` candidates · `216,822` polling places · `3,235` counties · `38 cycles, 1976–2026`
 
+<br/>
+
+<img src="docs/screenshots/03-texas-senate.png" alt="ElectionIntOS — the 2026 Texas Senate race, challengers ranked by money raised" width="100%">
+
+<sub><i>The 2026 Texas Senate race. Challengers lead the panel; the two sitting senators are demoted below them.</i></sub>
+
 </div>
 
 ---
@@ -61,6 +67,29 @@ buried in FEC bulk data and becomes the first thing you see.
 
 ---
 
+## Screens
+
+<table>
+<tr>
+<td width="50%">
+
+<img src="docs/screenshots/01-splash.png" alt="Boot screen — 2024 results filling east to west on a tile cartogram" width="100%">
+
+**Boot screen.** Real 2024 margins fill a tile cartogram **east to west** — the order returns actually arrive in as poll closings cross the time zones. Colours come from the same ramp the map paints with, so the splash can never drift from the dashboard behind it.
+
+</td>
+<td width="50%">
+
+<img src="docs/screenshots/02-globe-hover.png" alt="Globe projection with a hover readout over Texas" width="100%">
+
+**Globe + hover.** Hovering any division reads out certified turnout, major-party share, the top two finishers and who currently holds the seat — Cruz 53.1% / Allred 44.6%, with both sitting senators and their next election.
+
+</td>
+</tr>
+</table>
+
+---
+
 ## Quick start
 
 ```bash
@@ -98,8 +127,20 @@ node scripts/mongo_to_supabase.js --limit 5000   # ETL a slice; omit --limit for
 cd server && DATA_BACKEND=supabase node src/index.js
 ```
 
-Every endpoint returns the same JSON on either backend — that is enforced by a shared contract
-(`server/src/data/contract.js`) that both implementations are written against.
+Every endpoint returns the same JSON on either backend — enforced by a shared contract
+(`server/src/data/contract.js`) both implementations are written against, and verified rather than
+asserted:
+
+| Check | Result |
+|---|---|
+| Full ETL, Mongo → Postgres | **482,838 rows across 8 tables in 60s**, every table matching Mongo exactly |
+| Database size once loaded | **245 MB** (`us_polling_places` 127 MB, `us_margins` 66 MB) — fits Supabase's 500 MB free tier |
+| Endpoints diffed across backends | **22 checked · 18 identical** |
+| Remaining 4 | Benign and understood — see [Known limitations](#known-limitations) |
+
+> **If `supabase start` hangs for you**, it is the Logflare analytics container: it needs a
+> Stripe-seeded billing plan and never reports healthy. Nothing here reads it — set
+> `[analytics] enabled = false` in `supabase/config.toml` and the stack comes up.
 
 ---
 
@@ -260,6 +301,14 @@ Measured, not guessed.
   interpolated along a street rather than matched to a rooftop; the tooltip says which.
 - An FEC filing means *registered or past a spending threshold*, **not** ballot-qualified.
 - Money raised is money raised. It is not a poll, and the bars are captioned so nobody reads it as one.
+
+**Cross-backend differences** (4 of 22 endpoints; neither engine defines these)
+- Float summation order — one dollar of difference in a $7.6M total.
+- `null` vs absent inside an embedded JSON string.
+- Set ordering in a names list.
+- **A bbox `LIMIT` with no `ORDER BY` picks a different 50 polling places per backend.** Both answers
+  are valid; the query simply does not define which 50. Worth knowing before anyone treats a booth
+  list as stable.
 
 **Engineering**
 - The client bundle is ~1.37 MB (386 KB gzipped) and not yet code-split.
