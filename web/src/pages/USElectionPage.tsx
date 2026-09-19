@@ -313,7 +313,7 @@ export default function USElectionPage({
   // Capabilities the server reports; an overlay whose feed is not configured
   // never renders a toggle.
   const [capabilities, setCapabilities] = useState<Record<string, boolean>>({});
-  // ElectionIntOS opens dark and on the globe. The parent app defaults to a
+  // OSElectionInt opens dark and on the globe. The parent app defaults to a
   // flat light map because it is a reading surface inside a news site; this is
   // a console, and the first thing it should say is "this is planetary data".
   const [basemap, setBasemap] = useState<BasemapKey>("dark");
