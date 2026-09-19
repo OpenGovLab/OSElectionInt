@@ -90,6 +90,33 @@ interface MarginRow {
   winner_party: string;
   total: number;
   major_share: number;
+  /** Certified party totals — what a candidate's displayed share is built from. */
+  votes?: Record<string, number | undefined>;
+}
+
+/**
+ * A leading finisher, as /top-candidates reports them: who, not how many.
+ *
+ * There is deliberately no vote count here. That endpoint reads a collection
+ * keyed on the raw name string from each county's source file, where one
+ * ticket is spelled half a dozen ways, so its totals do not reconcile with
+ * the certified figures in us_margins. The share rendered beside these names
+ * is therefore derived from the margin row for the SAME division — the same
+ * record the choropleth is painted from — joined on `party`. That is why the
+ * server returns at most one candidate per party: it keeps the join exact,
+ * and a share can never contradict the margin pill sitting next to it.
+ */
+interface TopCandidate {
+  name: string;
+  party: string;
+  photo?: string | null;
+  bioguide?: string | null;
+  sitting?: boolean;
+}
+
+interface TopRow {
+  ocd_id: string;
+  top: TopCandidate[];
 }
 
 const US_BOUNDS: [number, number, number, number] = [-125, 24.4, -66.5, 49.4];
@@ -264,6 +291,10 @@ export default function USElectionPage({
   const [yearCounts, setYearCounts] = useState<Map<number, number>>(new Map());
   const [margins, setMargins] = useState<Map<string, MarginRow>>(new Map());
   const [holders, setHolders] = useState<Map<string, Holder[]>>(new Map());
+  // Who ran, per division, for the cut on screen. Names only — the numbers
+  // beside them come from `margins`; see TopCandidate.
+  const [topCandidates, setTopCandidates] =
+    useState<Map<string, TopCandidate[]>>(new Map());
   const [rows, setRows] = useState<Row[]>([]);
   const [selected, setSelected] = useState<Row | null>(null);
   const [detail, setDetail] = useState<Row | null>(null);
@@ -341,7 +372,8 @@ export default function USElectionPage({
   const [prefetching, setPrefetching] = useState(false);
   const playRef = useRef<number | null>(null);
   const [hoverInfo, setHoverInfo] = useState<
-    { x: number; y: number; row: Row; total?: number; majorShare?: number } | null>(null);
+    { x: number; y: number; row: Row; total?: number; majorShare?: number;
+      top?: TopCandidate[] } | null>(null);
   const [newsTip, setNewsTip] = useState<{
     x: number; y: number; name: string; articles: number;
     people: string; tilt: number | null; headline: string;
@@ -377,6 +409,8 @@ export default function USElectionPage({
   useEffect(() => { marginsRef.current = margins; }, [margins]);
   const holdersRef = useRef(holders);
   useEffect(() => { holdersRef.current = holders; }, [holders]);
+  const topCandidatesRef = useRef(topCandidates);
+  useEffect(() => { topCandidatesRef.current = topCandidates; }, [topCandidates]);
   // Only call a seat vacant when the officeholder feed actually loaded for
   // this office — otherwise "no holder" just means "not fetched".
   const hasHolderData = office === "us_house" || office === "us_senate";
@@ -933,20 +967,26 @@ export default function USElectionPage({
     });
 
     const onArrive = () => {
+      // Austin's US House seat. The state-house district Talarico sits in
+      // (sldl:52) is NOT in the archive — no geometry, no margins — so
+      // targeting it painted a black map and a "not found" panel. TX-37 is
+      // the district that actually covers Austin and it has certified
+      // results at every cycle we hold.
+      setOffice("us_house");
       setAutoLevel(false);
-      setLevel("sldl");
+      setLevel("cd");
       setTimeout(() => {
-        const talarico: Row = {
-          ocd_id: "ocd-division/country:us/state:tx/sldl:52",
-          name: "TX House District 52",
-          state: "Texas",
+        const austin: Row = {
+          ocd_id: "ocd-division/country:us/state:tx/cd:37",
+          name: "Congressional District 37",
+          state: "TX",
           margin: null,
         };
-        setSelected(talarico);
-        setDetail(talarico);
+        setSelected(austin);
+        setDetail(austin);
         setSheetOpen(true);
         onIntroDone?.();
-      }, 400);
+      }, 500);
     };
     map.once("moveend", onArrive);
     return () => { map.off("moveend", onArrive); };
@@ -1320,6 +1360,40 @@ export default function USElectionPage({
     marginsRef.current = m;
   }, []);
 
+  // ── who ran, for the cut on screen ───────────────────────────────────────
+  //
+  // Cached per (level, office, year) exactly like the margins are, so dragging
+  // the timeline across eleven cycles costs eleven requests once and nothing
+  // afterwards. Failure is silent and leaves the map fully usable: the hover
+  // simply omits the names section, which is also what happens for the cuts
+  // that genuinely have no candidate rows (every county cut, and 31 of the 51
+  // states for president 2024).
+  const topCacheRef = useRef<Map<string, TopRow[]>>(new Map());
+  useEffect(() => {
+    if (!ready || !year) return;
+    const k = `${level}|${office}|${year}`;
+    const apply = (list: TopRow[]) =>
+      setTopCandidates(new Map(list.map((r) => [r.ocd_id, r.top])));
+
+    const hit = topCacheRef.current.get(k);
+    if (hit) { apply(hit); return; }
+
+    let alive = true;
+    apiService({
+      method: "get",
+      url: `/us-election/top-candidates?level=${level}&office=${office}&year=${year}`,
+    })
+      .then((r) => {
+        if (!alive) return;
+        const list = (r as { data?: { data?: { rows?: TopRow[] } } })
+          ?.data?.data?.rows ?? [];
+        topCacheRef.current.set(k, list);
+        apply(list);
+      })
+      .catch(() => { if (alive) setTopCandidates(new Map()); });
+    return () => { alive = false; };
+  }, [level, office, year, ready]);
+
   // ── fetch margins and push them in as feature state ──────────────────────
   useEffect(() => {
     const map = mapRef.current;
@@ -1415,6 +1489,7 @@ export default function USElectionPage({
         },
         total: m?.total,
         majorShare: m?.major_share,
+        top: topCandidatesRef.current.get(id),
       });
       if (hoverRef.current === id) return;
       clear();
@@ -1803,6 +1878,57 @@ export default function USElectionPage({
             </>
           )}
 
+          {/* who ran — names from /top-candidates, share from the margin row */}
+          {hoverInfo.top?.length ? (
+            <>
+              <div className="mx-3 border-t border-white/5" />
+              <div className="space-y-1 px-3 py-2">
+                {hoverInfo.top.map((c) => {
+                  // The share is derived from the SAME margin row the pill
+                  // above reads, joined on party, so the two can never
+                  // disagree. Where the margin row has no entry for this
+                  // party the share is simply omitted — an empty slot is
+                  // honest, an invented number is not.
+                  //
+                  // DEM and REP only. The margin row's OTH bucket is every
+                  // minor candidate summed together, so printing it beside
+                  // one name would credit Jill Stein with Chase Oliver's and
+                  // Cornel West's votes as well. A named third-party finisher
+                  // is shown without a share rather than with a wrong one.
+                  const twoParty = c.party === "DEM" || c.party === "REP";
+                  const votes = twoParty && hoverInfo.total && hoverInfo.total > 0
+                    ? marginsRef.current.get(hoverInfo.row.ocd_id)?.votes?.[c.party]
+                    : undefined;
+                  const share = votes != null && hoverInfo.total
+                    ? (votes / hoverInfo.total) * 100
+                    : null;
+                  return (
+                    <div key={`${c.party}-${c.name}`} className="flex items-center gap-2">
+                      <Portrait src={c.photo} name={c.name} party={c.party} size={20} />
+                      <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-slate-200">
+                        {c.name}
+                        {c.sitting && (
+                          <span className="ml-1 text-amber-400" title="Sitting member">★</span>
+                        )}
+                      </span>
+                      <span className={`shrink-0 font-mono text-[10px] font-bold ${
+                        c.party === "DEM" ? "text-blue-400"
+                          : c.party === "REP" ? "text-red-400" : "text-slate-400"
+                      }`}>
+                        {c.party === "DEM" ? "D" : c.party === "REP" ? "R" : "O"}
+                      </span>
+                      {share != null && (
+                        <span className="w-11 shrink-0 text-right font-mono text-[10px] tabular-nums text-slate-300">
+                          {share.toFixed(1)}%
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          ) : null}
+
           {/* incumbents */}
           {hoverInfo.row.holders?.length ? (
             <>
@@ -1975,7 +2101,7 @@ export default function USElectionPage({
 
       {/* timeline scrubber */}
       {timeline.length > 1 && (
-        <div className="pointer-events-auto absolute bottom-3 left-1/2 z-20 hidden w-[min(34rem,calc(100%-24rem))] -translate-x-1/2 items-center gap-3 rounded-xl border border-black/10 bg-white/95 px-3 py-2 shadow-lg backdrop-blur md:flex dark:border-white/15 dark:bg-slate-900/95">
+        <div className="pointer-events-auto absolute bottom-9 left-1/2 z-20 hidden w-[min(34rem,calc(100%-24rem))] -translate-x-1/2 items-center gap-3 rounded-xl border border-black/10 bg-white/95 px-3 py-2 shadow-lg backdrop-blur md:flex dark:border-white/15 dark:bg-slate-900/95">
           <button
             onClick={() => (playing ? stop() : play())}
             disabled={prefetching}
@@ -2003,7 +2129,7 @@ export default function USElectionPage({
       )}
 
       {/* legend */}
-      <div className="pointer-events-none absolute bottom-3 left-3 z-20 rounded-lg border border-black/10 bg-white/90 px-3 py-2 text-[10px] shadow-lg backdrop-blur dark:border-white/10 dark:bg-slate-900/90">
+      <div className="pointer-events-none absolute bottom-9 left-3 z-20 rounded-lg border border-black/10 bg-white/90 px-3 py-2 text-[10px] shadow-lg backdrop-blur dark:border-white/10 dark:bg-slate-900/90">
         <div className="mb-1 font-semibold text-slate-700 dark:text-slate-200">Margin</div>
         <div className="flex items-center gap-1">
           <span className="text-blue-700 dark:text-blue-400">D+40</span>
