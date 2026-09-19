@@ -42,3 +42,22 @@ html, body, #root { height: 100%; margin: 0; }
 @media (prefers-reduced-motion: reduce) {
   .eios-cell, .eios-letter, .eios-sub, .eios-bar { animation-duration: 0.01s; animation-delay: 0s; }
 }
+
+/* An answer arrives whole, so it fades in whole. Deliberately not a
+   typewriter: staging a token-by-token reveal would imply the model is
+   generating live in front of the reader when the response is already
+   complete in hand. */
+@keyframes eios-answer-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+.eios-answer { animation: eios-answer-in 260ms ease-out both; }
+
+/* The news rail scrolls horizontally; a visible scrollbar under a row of
+   cards reads as chrome rather than content. */
+.eios-rail::-webkit-scrollbar { height: 0; }
+.eios-rail { scrollbar-width: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .eios-answer { animation: none; }
+}
