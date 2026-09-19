@@ -70,6 +70,122 @@ exports.getMargins = async (req, res) => {
 };
 
 /**
+ * `us_race_candidates` carries no `level` field — the level is implicit in the
+ * shape of the OCD id, so a level filter has to be expressed as one.
+ *
+ * Only two shapes are actually populated: bare state ids and `/cd:` ids. There
+ * are no county-level candidate rows at all (checked: 25,160 cd + 14,236
+ * state, nothing else), which is why a county cut legitimately returns an
+ * empty list rather than an error — the client omits the section.
+ */
+const LEVEL_OCD_PATTERN = {
+  state: "^ocd-division/country:us/state:[a-z]{2}$",
+  cd: "/cd:",
+  county: "/county:",
+  sldu: "/sldu:",
+  sldl: "/sldl:",
+};
+
+/**
+ * GET /api/us-election/top-candidates
+ *
+ * WHO ran, for every geography in one contest type + year. The map needs a
+ * name to put on a hover, and the per-division endpoint cannot serve that —
+ * it would be a round trip per mouse move.
+ *
+ * This returns NAMES AND PARTIES ONLY, deliberately. It does not return vote
+ * counts or shares, and callers must not compute them from this collection.
+ *
+ * The reason is that `us_race_candidates` keys a row on the raw name string
+ * as it appeared in each county's source file, and the same ticket is spelled
+ * many ways. Texas 2024 president has 59 rows, six of which are Trump:
+ * "Donald J. Trump", "Donald J. Trump/jd Vance", "Donald J. Trump / Jd Vance",
+ * "Donald J. Trump Jd Vance", "Donald J Trump", and one that landed in OTH as
+ * "Donald J. Trump/jd Vance Rep". Reading the largest single row gives Trump
+ * 25.87% of a state he carried with 56% — a figure that would sit directly
+ * beside a margin pill saying R+13.9 and contradict it.
+ *
+ * Summing the variants per party gets closer but is still not certified:
+ * measured against us_margins, Texas lands 5.4% low and New York 57% low,
+ * because coverage of this collection is partial and party labelling leaks.
+ *
+ * So the division of labour is: this endpoint answers "who", and `us_margins`
+ * — the same rows the choropleth is painted from — answers "how many". The
+ * client pairs them on `party`, which is why at most one candidate per party
+ * is returned: it keeps that join unambiguous. A share shown next to a margin
+ * can then never disagree with it, because both came from the same record.
+ */
+exports.getTopCandidates = async (req, res) => {
+  try {
+    const { level = "state", office = "president", election_type = "general" } = req.query;
+    if (!LEVELS.includes(level)) {
+      return res.status(400).json({ success: false, message: `level must be one of ${LEVELS}` });
+    }
+    if (!OFFICES.includes(office)) {
+      return res.status(400).json({ success: false, message: `office must be one of ${OFFICES}` });
+    }
+
+    const Cands = getModelForLanguage(
+      "us_race_candidates", req.query.lang, req.query.country,
+    );
+    const q = { office, election_type, ocd_id: { $regex: LEVEL_OCD_PATTERN[level] } };
+
+    let year = parseInt(req.query.year, 10);
+    if (!Number.isFinite(year)) {
+      const latest = await Cands.find(q).sort({ year: -1 }).limit(1).lean();
+      if (!latest.length) {
+        return res.json({ success: true, data: { year: null, level, office, election_type, count: 0, rows: [] } });
+      }
+      year = latest[0].year;
+    }
+    q.year = year;
+
+    const [grouped, holders] = await Promise.all([
+      Cands.aggregate([
+        { $match: q },
+        // Collapse the spelling variants: group to one entry per party and
+        // keep the best-voted spelling as the display name. Votes are summed
+        // only to ORDER the parties — the figure is never returned.
+        { $sort: { ocd_id: 1, votes: -1 } },
+        { $group: {
+          _id: { ocd_id: "$ocd_id", party: "$party" },
+          votes: { $sum: "$votes" },
+          name: { $first: "$name" },
+          photo: { $first: "$photo" },
+          bioguide: { $first: "$bioguide" },
+        } },
+        { $sort: { "_id.ocd_id": 1, votes: -1 } },
+        { $group: {
+          _id: "$_id.ocd_id",
+          top: { $push: {
+            name: "$name", party: "$_id.party",
+            photo: "$photo", bioguide: "$bioguide",
+          } },
+        } },
+        { $project: { _id: 0, ocd_id: "$_id", top: { $slice: ["$top", 2] } } },
+      ]),
+      // Same bioguide join getDivision uses, for the same reason: a name match
+      // put the wrong Begich on the page once already. A candidate with no
+      // bioguide is simply never flagged, which is the right answer for a
+      // challenger who has never held federal office.
+      getModelForLanguage("us_officeholders", req.query.lang, req.query.country)
+        .find({ office }, { _id: 0, bioguide: 1 }).lean(),
+    ]);
+
+    const sitting = new Set(holders.map((h) => h.bioguide).filter(Boolean));
+    const rows = grouped.map((r) => ({
+      ocd_id: r.ocd_id,
+      top: r.top.map((c) => (c.bioguide && sitting.has(c.bioguide)
+        ? { ...c, sitting: true } : c)),
+    }));
+
+    res.json({ success: true, data: { year, level, office, election_type, count: rows.length, rows } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/**
  * GET /api/us-election/years
  * Which (year, office) combinations actually have data — drives the UI's year
  * picker so it can only offer cuts that will render.

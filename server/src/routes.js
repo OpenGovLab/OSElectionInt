@@ -2,6 +2,7 @@ const express = require("express");
 
 const {
   getMargins,
+  getTopCandidates,
   getYears,
   getDivision,
   getOfficeholders,
@@ -29,6 +30,9 @@ const router = express.Router();
 const longCache = cacheMiddleware(60 * 60);
 
 router.get("/margins", longCache, getMargins);
+// The two leading finishers per geography — one call so hover has a name
+// without a request per mouse move.
+router.get("/top-candidates", longCache, getTopCandidates);
 router.get("/years", longCache, getYears);
 router.get("/capabilities", longCache, getCapabilities);
 router.get("/stats", longCache, getStats);
