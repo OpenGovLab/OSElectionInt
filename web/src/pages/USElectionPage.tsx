@@ -57,15 +57,12 @@ import {
 import { useIsDark } from "@/lib/theme";
 import { apiService } from "@/lib/api";
 import { ChromeFooter, ChromeHeader } from "@/components/Chrome";
+import type { IntroPhase } from "@/App";
 
-/**
- * US election map — explore-first.
- *
- * Geometry is one PMTiles archive read over HTTP range requests; results come
- * from us_margins, which the OpenElections ingest builds. The two are joined by
- * OCD division id, promoted to the feature id so margins can be pushed in as
- * feature state instead of baked into a giant match expression.
- */
+interface PageProps {
+  introPhase?: IntroPhase;
+  onIntroDone?: () => void;
+}
 
 interface Row {
   ocd_id: string;
@@ -231,7 +228,10 @@ function applyProjection(
   }
 }
 
-export default function USElectionPage() {
+export default function USElectionPage({
+  introPhase = "done",
+  onIntroDone,
+}: PageProps) {
   const isDark = useIsDark();
   const palette = NEUTRAL[isDark ? "dark" : "light"];
 
@@ -309,6 +309,9 @@ export default function USElectionPage() {
   const [cursor, setCursor] = useState<{ lng: number; lat: number } | null>(null);
   const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(false);
+  const spinRef = useRef<number | null>(null);
+  const introPhaseRef = useRef(introPhase);
+  useEffect(() => { introPhaseRef.current = introPhase; }, [introPhase]);
   const [sheetOpen, setSheetOpen] = useState(() => !isNarrow());
   const [query, setQuery] = useState("");
   // Hover readout. Kept in state rather than a MapLibre Popup so it can show
@@ -448,15 +451,14 @@ export default function USElectionPage() {
     protocolRef.current = protocol;
     maplibregl.addProtocol("pmtiles", protocol.tile);
 
+    const wantGlobeIntro = introPhaseRef.current === "splash";
     const map = new maplibregl.Map({
       container: containerRef.current,
-      // .style, not the whole def — basemapFor returns a BasemapDef, and the
-      // `as never` would otherwise hide an object being passed where MapLibre
-      // expects a style URL or spec.
       style: basemapFor("dark").style as never,
-      bounds: US_BOUNDS,
-      fitBoundsOptions: { padding: fitPadding() },
-      maxZoom: 12, minZoom: 2, attributionControl: false,
+      ...(wantGlobeIntro
+        ? { center: [30, 20] as [number, number], zoom: 1.6 }
+        : { bounds: US_BOUNDS, fitBoundsOptions: { padding: fitPadding() } }),
+      maxZoom: 12, minZoom: 0.8, attributionControl: false,
     });
     mapRef.current = map;
     appliedBasemapRef.current = "dark";
@@ -783,6 +785,21 @@ export default function USElectionPage() {
     map.on("load", () => {
       installLayers();
 
+      if (wantGlobeIntro) {
+        applyProjection(map, "globe", true);
+        let lastTime = 0;
+        const spin = (ts: number) => {
+          if (!lastTime) lastTime = ts;
+          const dt = ts - lastTime;
+          lastTime = ts;
+          const c = map.getCenter();
+          c.lng -= 0.018 * dt;
+          map.setCenter(c);
+          spinRef.current = requestAnimationFrame(spin);
+        };
+        spinRef.current = requestAnimationFrame(spin);
+      }
+
       setReady(true);
       map.once("idle", () => refreshRows("state"));
     });
@@ -793,6 +810,8 @@ export default function USElectionPage() {
     map.on("idle", () => refreshRows(levelRef.current));
 
     return () => {
+      if (spinRef.current) cancelAnimationFrame(spinRef.current);
+      spinRef.current = null;
       ro.disconnect();
       attribWatch?.disconnect();
       map.remove();
@@ -894,6 +913,44 @@ export default function USElectionPage() {
     projectionRef.current = projection;
     applyProjection(map, projection, darkInkRef.current, { camera: true });
   }, [projection, ready]);
+
+  // ── intro flyTo: splash done → stop spin → fly to Austin → open TX-52 ─
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || introPhase !== "flyto") return;
+
+    if (spinRef.current) {
+      cancelAnimationFrame(spinRef.current);
+      spinRef.current = null;
+    }
+
+    map.flyTo({
+      center: [-97.7431, 30.2672],
+      zoom: 7,
+      speed: 0.8,
+      curve: 1.4,
+      essential: true,
+    });
+
+    const onArrive = () => {
+      setAutoLevel(false);
+      setLevel("sldl");
+      setTimeout(() => {
+        const talarico: Row = {
+          ocd_id: "ocd-division/country:us/state:tx/sldl:52",
+          name: "TX House District 52",
+          state: "Texas",
+          margin: null,
+        };
+        setSelected(talarico);
+        setDetail(talarico);
+        setSheetOpen(true);
+        onIntroDone?.();
+      }, 400);
+    };
+    map.once("moveend", onArrive);
+    return () => { map.off("moveend", onArrive); };
+  }, [introPhase, ready, onIntroDone]);
 
   // ── historical polling places, fetched per viewport ──────────────────
   //
@@ -1356,6 +1413,8 @@ export default function USElectionPage() {
           margin: m ? m.margin : null, winner: m?.winner_party,
           holders: holdersRef.current.get(id),
         },
+        total: m?.total,
+        majorShare: m?.major_share,
       });
       if (hoverRef.current === id) return;
       clear();
@@ -1486,21 +1545,37 @@ export default function USElectionPage() {
     [rows, nextBallot],
   );
 
-  /**
-   * Console chrome rather than the parent's white pills.
-   *
-   * Uppercase mono at a tight size, a hairline border, and a cyan accent for
-   * the active state. Cyan deliberately: every other colour on this screen
-   * carries meaning — red and blue are parties, amber is polling places — so
-   * the interface has to speak in a hue the data never uses, or the chrome
-   * starts looking like a result.
-   */
   const chip = (active: boolean) =>
     `rounded-[3px] border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.12em] backdrop-blur transition-colors ${
       active
         ? "border-cyan-400/60 bg-cyan-400/15 text-cyan-200 shadow-[0_0_12px_rgba(34,211,238,0.15)]"
         : "border-white/10 bg-slate-900/70 text-slate-400 hover:border-white/25 hover:text-slate-200"
     }`;
+
+  const tbtn = (active: boolean) =>
+    `flex h-8 w-8 items-center justify-center rounded-[4px] font-mono text-[11px] transition-colors ${
+      active
+        ? "bg-cyan-400/15 text-cyan-300 shadow-[0_0_10px_rgba(34,211,238,0.12)]"
+        : "text-slate-500 hover:bg-white/5 hover:text-slate-300"
+    }`;
+
+  const officeIcon = (id: string) => {
+    switch (id) {
+      case "president": return (
+        <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-4h6v4"/></svg>
+      );
+      case "us_senate": return (
+        <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 3l9 4v2H3V7zM5 9v8M19 9v8M9 9v8M15 9v8M3 17h18v4H3z"/></svg>
+      );
+      case "us_house": return (
+        <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M17 21H7a2 2 0 01-2-2V9l7-6 7 6v10a2 2 0 01-2 2zM9 21v-6h6v6"/></svg>
+      );
+      case "governor": return (
+        <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M3 9h18"/></svg>
+      );
+      default: return null;
+    }
+  };
 
   const marginPill = (m: number | null | undefined) => {
     if (m == null) return "bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400";
@@ -1632,36 +1707,93 @@ export default function USElectionPage() {
       {/* hover readout — pointer-events-none so it never blocks the map */}
       {hoverInfo && (
         <div
-          className="pointer-events-none absolute z-30 hidden max-w-[16rem] rounded-lg border border-black/10 bg-white/95 px-2.5 py-1.5 shadow-lg backdrop-blur md:block dark:border-white/15 dark:bg-slate-900/95"
+          className="pointer-events-none absolute z-30 hidden w-[18rem] rounded-lg border border-cyan-500/20 bg-slate-950/95 shadow-2xl backdrop-blur md:block"
           style={{
-            left: Math.min(hoverInfo.x + 14, (containerRef.current?.clientWidth ?? 0) - 270),
+            left: Math.min(hoverInfo.x + 14, (containerRef.current?.clientWidth ?? 0) - 310),
             top: Math.max(8, hoverInfo.y - 10),
           }}
         >
-          <div className="flex items-baseline justify-between gap-3">
-            <span className="truncate text-xs font-semibold text-slate-900 dark:text-white">
+          {/* header: name + margin */}
+          <div className="flex items-baseline justify-between gap-3 px-3 pt-2.5 pb-1.5">
+            <span className="truncate font-mono text-xs font-semibold tracking-wide text-slate-100">
               {hoverInfo.row.name}
             </span>
-            <span className={`shrink-0 rounded px-1.5 text-[10px] font-semibold ${marginPill(hoverInfo.row.margin)}`}>
+            <span className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold ${marginPill(hoverInfo.row.margin)}`}>
               {marginLabel(hoverInfo.row.margin)}
             </span>
           </div>
-          <div className="text-[10px] text-slate-500 dark:text-slate-400">
+          <div className="px-3 pb-2 font-mono text-[10px] text-slate-500">
             {hoverInfo.row.state}
             {hoverInfo.row.margin != null && ` · ${year} ${officeMeta.label.toLowerCase()}`}
+            {hoverInfo.row.winner && (
+              <span className="ml-1.5 inline-flex items-center gap-1">
+                <span className={`inline-block h-1.5 w-1.5 rounded-full ${
+                  hoverInfo.row.winner === "DEM" ? "bg-blue-500"
+                    : hoverInfo.row.winner === "REP" ? "bg-red-500" : "bg-slate-400"
+                }`} />
+                <span className="text-slate-400">{hoverInfo.row.winner}</span>
+              </span>
+            )}
           </div>
-          {hoverInfo.row.holders?.length ? (
-            <div className="mt-0.5 text-[10px] text-slate-600 dark:text-slate-300">
-              {hoverInfo.row.holders.map((h) => (
-                <span key={h.bioguide || h.name}
-                  className="mr-1.5 inline-flex items-center gap-1 whitespace-nowrap align-middle">
-                  <Portrait src={h.photo} name={h.name} party={h.party} size={18} />
-                  {h.name}
+
+          {/* turnout */}
+          {hoverInfo.total != null && hoverInfo.total > 0 && (
+            <>
+              <div className="mx-3 border-t border-white/5" />
+              <div className="flex items-center justify-between px-3 py-1.5 font-mono text-[10px] text-slate-400">
+                <span>
+                  <span className="tabular-nums text-slate-200">{hoverInfo.total.toLocaleString()}</span> votes
                 </span>
-              ))}
-            </div>
+                {hoverInfo.majorShare != null && (
+                  <span>
+                    major-party <span className="tabular-nums text-cyan-300">{(hoverInfo.majorShare * 100).toFixed(1)}%</span>
+                  </span>
+                )}
+              </div>
+            </>
+          )}
+
+          {/* incumbents */}
+          {hoverInfo.row.holders?.length ? (
+            <>
+              <div className="mx-3 border-t border-white/5" />
+              <div className="space-y-1 px-3 py-2">
+                {hoverInfo.row.holders.map((h) => (
+                  <div key={h.bioguide || h.name} className="flex items-center gap-2">
+                    <Portrait src={h.photo} name={h.name} party={h.party} size={22} />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate font-mono text-[11px] font-medium text-slate-200">
+                          {h.name}
+                        </span>
+                        <span className={`shrink-0 rounded px-1 py-px font-mono text-[8px] font-bold tracking-wide ${
+                          h.party === "Democratic" ? "bg-blue-900/60 text-blue-300"
+                            : h.party === "Republican" ? "bg-red-900/60 text-red-300" : "bg-slate-800 text-slate-400"
+                        }`}>
+                          {h.party === "Democratic" ? "D" : h.party === "Republican" ? "R" : h.party?.charAt(0) ?? ""}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 font-mono text-[9px] text-slate-500">
+                        <span className="inline-flex items-center gap-0.5 text-cyan-400/80">
+                          <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" fill="currentColor">
+                            <path d="M6 1l1.5 3.1 3.4.5-2.5 2.4.6 3.4L6 8.8 3 10.4l.6-3.4L1.1 4.6l3.4-.5z"/>
+                          </svg>
+                          INCUMBENT
+                        </span>
+                        {h.next_election && (
+                          <span>next: <span className="text-slate-400">{h.next_election.slice(0, 4)}</span></span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           ) : null}
-          <div className="mt-0.5 text-[9px] text-slate-400">click for detail</div>
+
+          <div className="border-t border-white/5 px-3 py-1.5 font-mono text-[9px] tracking-wide text-slate-600">
+            CLICK FOR DETAIL
+          </div>
         </div>
       )}
 
