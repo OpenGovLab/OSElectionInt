@@ -413,12 +413,30 @@ export default function USElectionPage({
    * read as "there is no data here" when the truth is "you are looking at the
    * wrong layer for this zoom".
    *
-   * Auto-level already avoids this. This is the manual path — someone pinned
-   * a level, then kept zooming. Rather than paint nothing under a banner, fall
-   * back to the closest in-band level the current office actually supports.
+   * Which way to resolve that depends on WHO moved last, and getting this
+   * backwards is what made the level chips look broken: picking "States" from
+   * county zoom set the level, this effect saw it out of band, and put it
+   * straight back to counties. The chip appeared dead.
+   *
+   * So: a level the reader just PICKED is intent — move the camera to it.
+   * A level that fell out of band because they kept ZOOMING is stale — move
+   * the level to the camera.
    */
+  const pickedLevelRef = useRef<DivisionLevel | null>(null);
   useEffect(() => {
-    if (!ready || autoLevel || !outOfBand) return;
+    const map = mapRef.current;
+    if (!map || !ready || autoLevel || !outOfBand) return;
+
+    // Their pick wins: ease the camera into the band rather than overriding.
+    if (pickedLevelRef.current === level) {
+      pickedLevelRef.current = null;
+      const target = zoom > levelMeta.maxzoom
+        ? levelMeta.maxzoom - 0.35
+        : levelMeta.minzoom + 0.35;
+      map.easeTo({ zoom: target, duration: 700 });
+      return;
+    }
+
     const inBand = allowedLevels.filter(
       (l) => zoom >= l.minzoom && zoom <= l.maxzoom,
     );
@@ -426,7 +444,7 @@ export default function USElectionPage({
     // Deepest level that covers this zoom — zooming in should reveal more.
     const want = inBand[inBand.length - 1];
     if (want.id !== level) setLevel(want.id);
-  }, [ready, autoLevel, outOfBand, allowedLevels, zoom, level]);
+  }, [ready, autoLevel, outOfBand, allowedLevels, zoom, level, levelMeta]);
 
   const levelRef = useRef(level);
   useEffect(() => { levelRef.current = level; }, [level]);
@@ -973,7 +991,7 @@ export default function USElectionPage({
     applyProjection(map, projection, darkInkRef.current, { camera: true });
   }, [projection, ready]);
 
-  // ── intro flyTo: splash done → stop spin → fly to Austin → open TX-52 ─
+  // ── intro flyTo: splash done → stop spin → fly to Texas → open the Senate race ─
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready || introPhase !== "flyto") return;
@@ -983,32 +1001,38 @@ export default function USElectionPage({
       spinRef.current = null;
     }
 
+    // Austin, but held at z5.2 — inside the state layer's z0-6 band, so Texas
+    // stays painted on arrival. Flying to z7 dropped past that band and the
+    // state fill stopped drawing, which is what made the landing look empty.
     map.flyTo({
       center: [-97.7431, 30.2672],
-      zoom: 7,
+      zoom: 5.2,
       speed: 0.8,
       curve: 1.4,
       essential: true,
     });
 
     const onArrive = () => {
-      // Austin's US House seat. The state-house district Talarico sits in
-      // (sldl:52) is NOT in the archive — no geometry, no margins — so
-      // targeting it painted a black map and a "not found" panel. TX-37 is
-      // the district that actually covers Austin and it has certified
-      // results at every cycle we hold.
-      setOffice("us_house");
+      // The 2026 Texas Senate race, opened at STATE level.
+      //
+      // Talarico is a state representative, and his own district (sldl:52) has
+      // geometry but no certified results — targeting it painted a black map
+      // and a "not found" panel. The seat he is actually running for is the US
+      // Senate, which is a statewide contest: it lives on the state layer, has
+      // results at every cycle, and is the race where he is the story —
+      // $68.5m raised as a challenger against two sitting senators.
+      setOffice("us_senate");
       setAutoLevel(false);
-      setLevel("cd");
+      setLevel("state");
       setTimeout(() => {
-        const austin: Row = {
-          ocd_id: "ocd-division/country:us/state:tx/cd:37",
-          name: "Congressional District 37",
+        const texas: Row = {
+          ocd_id: "ocd-division/country:us/state:tx",
+          name: "Texas",
           state: "TX",
           margin: null,
         };
-        setSelected(austin);
-        setDetail(austin);
+        setSelected(texas);
+        setDetail(texas);
         setSheetOpen(true);
         onIntroDone?.();
       }, 500);
@@ -1843,7 +1867,11 @@ export default function USElectionPage({
             {allowedLevels.map((l) => (
               <button
                 key={l.id}
-                onClick={() => { setAutoLevel(false); setLevel(l.id); }}
+                onClick={() => {
+                  pickedLevelRef.current = l.id;
+                  setAutoLevel(false);
+                  setLevel(l.id);
+                }}
                 title={l.label}
                 className={tbtn(!autoLevel && level === l.id)}
               >
