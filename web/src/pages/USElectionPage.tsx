@@ -341,7 +341,7 @@ export default function USElectionPage({
   const [prefetching, setPrefetching] = useState(false);
   const playRef = useRef<number | null>(null);
   const [hoverInfo, setHoverInfo] = useState<
-    { x: number; y: number; row: Row } | null>(null);
+    { x: number; y: number; row: Row; total?: number; majorShare?: number } | null>(null);
   const [newsTip, setNewsTip] = useState<{
     x: number; y: number; name: string; articles: number;
     people: string; tilt: number | null; headline: string;
@@ -1613,94 +1613,144 @@ export default function USElectionPage({
         style={{ background: "radial-gradient(ellipse at 42% 45%, transparent 38%, rgba(2,6,23,0.55) 100%)" }}
       />
 
-      {/* controls */}
-      <div className="pointer-events-auto absolute left-4 top-12 z-20 flex max-w-[calc(100%-2rem)] flex-col gap-1.5 md:max-w-[calc(100%-25rem)]">
-        <div className="flex flex-wrap items-center gap-1.5">
-          {OFFICES.map((o) => (
-            <button key={o.id} onClick={() => setOffice(o.id)} className={chip(office === o.id)}>
-              {o.label}
-            </button>
-          ))}
-          {/* Which cycle you are looking at is not a "layer" — it stays out. */}
-          {years.length > 0 && (
-            <select
-              value={year ?? ""}
-              onChange={(e) => setYear(Number(e.target.value))}
-              aria-label="Election year"
-              className="rounded-full border border-black/10 bg-white/90 px-3 py-1.5 text-xs font-medium text-slate-800 shadow-sm backdrop-blur md:hidden dark:border-white/15 dark:bg-slate-900/90 dark:text-slate-100"
-            >
-              {years.map((y) => (
-                <option key={y} value={y}>
-                  {y}{yearCounts.get(y) ? ` · ${yearCounts.get(y)}` : ""}
-                </option>
-              ))}
-            </select>
-          )}
+      {/* ── controls ─────────────────────────────────────────────────── */}
+
+      {/* Office selector — horizontal row, always visible */}
+      <div className="pointer-events-auto absolute left-4 top-12 z-20 flex items-center gap-1">
+        {OFFICES.map((o) => (
           <button
-            onClick={() => setToolsOpen((o) => !o)}
-            aria-expanded={toolsOpen}
-            className={`md:hidden ${chip(toolsOpen)}`}
+            key={o.id}
+            onClick={() => setOffice(o.id)}
+            title={o.label}
+            className={`flex items-center gap-1.5 rounded-[4px] border px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.12em] backdrop-blur transition-colors ${
+              office === o.id
+                ? "border-cyan-400/60 bg-cyan-400/15 text-cyan-200 shadow-[0_0_12px_rgba(34,211,238,0.15)]"
+                : "border-white/10 bg-slate-900/80 text-slate-500 hover:border-white/25 hover:text-slate-200"
+            }`}
           >
-            {toolsOpen ? "Done" : "Layers"}
+            {officeIcon(o.id)}
+            <span className="hidden md:inline">{o.label}</span>
           </button>
-        </div>
-        <div className={`${toolsOpen ? "flex" : "hidden"} flex-wrap items-center gap-1.5 md:flex`}>
-          {BASEMAPS.map((bm) => (
-            <button key={bm.id} onClick={() => setBasemap(bm.id)}
-              className={chip(basemap === bm.id)}>
-              {bm.label}
-            </button>
-          ))}
-          <button
-            onClick={() =>
-              setProjection((p) => (p === "globe" ? "mercator" : "globe"))}
-            title={projection === "globe"
-              ? "Flat map — equal-area reading of the choropleth"
-              : "Globe — see the country in the world"}
-            className={chip(projection === "globe")}
+        ))}
+        {years.length > 0 && (
+          <select
+            value={year ?? ""}
+            onChange={(e) => setYear(Number(e.target.value))}
+            aria-label="Election year"
+            className="ml-1 rounded-[4px] border border-white/10 bg-slate-900/80 px-2 py-1.5 font-mono text-[10px] tabular-nums uppercase tracking-wider text-slate-300 backdrop-blur outline-none"
           >
-            {projection === "globe" ? "3D" : "2D"}
-          </button>
-          {availableOverlays(capabilities).map((o) => (
+            {years.map((y) => (
+              <option key={y} value={y}>
+                {y}{yearCounts.get(y) ? ` · ${yearCounts.get(y)}` : ""}
+              </option>
+            ))}
+          </select>
+        )}
+        {/* mobile toggle for the sidebar tools */}
+        <button
+          onClick={() => setToolsOpen((o) => !o)}
+          aria-expanded={toolsOpen}
+          className={`md:hidden ${tbtn(toolsOpen)} !h-auto !w-auto rounded-[4px] border border-white/10 bg-slate-900/80 px-2 py-1.5 backdrop-blur`}
+          title="Toggle controls"
+        >
+          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+      </div>
+
+      {/* Vertical toolbar — grouped icon buttons */}
+      <div className={`pointer-events-auto absolute left-4 top-[5.5rem] z-20 ${toolsOpen ? "flex" : "hidden"} flex-col md:flex`}>
+        <div className="flex flex-col rounded-lg border border-white/10 bg-slate-900/80 backdrop-blur">
+          {/* basemap group */}
+          <div className="flex flex-col items-center gap-0.5 p-1" role="group" aria-label="Basemap">
+            {BASEMAPS.map((bm) => (
+              <button
+                key={bm.id}
+                onClick={() => setBasemap(bm.id)}
+                title={`Basemap: ${bm.label}`}
+                className={tbtn(basemap === bm.id)}
+              >
+                {bm.id === "light" && (
+                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+                )}
+                {bm.id === "dark" && (
+                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12.79A9 9 0 1111.21 3a7 7 0 009.79 9.79z"/></svg>
+                )}
+                {bm.id === "satellite" && (
+                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                )}
+              </button>
+            ))}
+          </div>
+
+          <div className="mx-2 border-t border-white/5" />
+
+          {/* projection toggle */}
+          <div className="flex flex-col items-center p-1" role="group" aria-label="Projection">
             <button
-              key={o.id}
-              onClick={() => setOverlays((s) => ({ ...s, [o.id]: !s[o.id] }))}
-              title={o.hint}
-              className={chip(overlays[o.id])}
+              onClick={() => setProjection((p) => (p === "globe" ? "mercator" : "globe"))}
+              title={projection === "globe" ? "Switch to flat map" : "Switch to globe"}
+              className={tbtn(projection === "globe")}
             >
-              {o.label}
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10A15.3 15.3 0 0112 2z"/>
+              </svg>
             </button>
-          ))}
-          <button
-            onClick={() => setAutoLevel(true)}
-            title="Let zoom choose the level of detail"
-            className={chip(autoLevel)}
-          >
-            Auto
-          </button>
-          {allowedLevels.map((l) => (
-            <button
-              key={l.id}
-              onClick={() => { setAutoLevel(false); setLevel(l.id); }}
-              className={chip(!autoLevel && level === l.id)}
-            >
-              {l.label}
-            </button>
-          ))}
-          {years.length > 0 && (
-            <select
-              value={year ?? ""}
-              onChange={(e) => setYear(Number(e.target.value))}
-              aria-label="Election year"
-              className="hidden rounded-full border border-black/10 bg-white/90 px-3 py-1.5 text-xs font-medium text-slate-800 shadow-sm backdrop-blur md:block dark:border-white/15 dark:bg-slate-900/90 dark:text-slate-100"
-            >
-              {years.map((y) => (
-                <option key={y} value={y}>
-                  {y}{yearCounts.get(y) ? ` · ${yearCounts.get(y)}` : ""}
-                </option>
-              ))}
-            </select>
+          </div>
+
+          {availableOverlays(capabilities).length > 0 && (
+            <>
+              <div className="mx-2 border-t border-white/5" />
+
+              {/* overlay toggles */}
+              <div className="flex flex-col items-center gap-0.5 p-1" role="group" aria-label="Overlays">
+                {availableOverlays(capabilities).map((o) => (
+                  <button
+                    key={o.id}
+                    onClick={() => setOverlays((s) => ({ ...s, [o.id]: !s[o.id] }))}
+                    title={`${o.label}: ${o.hint}`}
+                    className={tbtn(overlays[o.id])}
+                  >
+                    {o.id === "races" && (
+                      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                    )}
+                    {o.id === "news" && (
+                      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 22h16a2 2 0 002-2V4a2 2 0 00-2-2H8a2 2 0 00-2 2v16a2 2 0 01-2 2zm0 0a2 2 0 01-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8M18 18h-8M18 10h-8"/></svg>
+                    )}
+                    {o.id === "homes" && (
+                      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12l9-9 9 9"/><path d="M5 10v10a1 1 0 001 1h3v-6h6v6h3a1 1 0 001-1V10"/></svg>
+                    )}
+                    {o.id === "polls" && (
+                      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </>
           )}
+
+          <div className="mx-2 border-t border-white/5" />
+
+          {/* level selector */}
+          <div className="flex flex-col items-center gap-0.5 p-1" role="group" aria-label="Detail level">
+            <button
+              onClick={() => setAutoLevel(true)}
+              title="Auto: let zoom choose the level"
+              className={tbtn(autoLevel)}
+            >
+              <span className="text-[10px] font-bold">A</span>
+            </button>
+            {allowedLevels.map((l) => (
+              <button
+                key={l.id}
+                onClick={() => { setAutoLevel(false); setLevel(l.id); }}
+                title={l.label}
+                className={tbtn(!autoLevel && level === l.id)}
+              >
+                <span className="text-[9px] font-bold">{l.short.slice(0, 3).toUpperCase()}</span>
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
