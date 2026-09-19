@@ -8,8 +8,11 @@
     "dev": "node --watch src/index.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.109.0",
     "dotenv": "^16.4.5",
     "express": "^4.21.2",
-    "mongoose": "^8.9.5"
+    "mongoose": "^8.9.5",
+    "pg": "^8.23.0",
+    "ws": "^8.21.3"
   }
 }
