@@ -89,10 +89,6 @@ const partyText = (p: string) =>
 const partyBg = (p: string) =>
   p === "DEM" ? "bg-blue-600" : p === "REP" ? "bg-red-600" : "bg-slate-400";
 
-const money = (n: number) =>
-  n >= 1e6 ? `$${(n / 1e6).toFixed(1)}M`
-    : n >= 1e3 ? `$${Math.round(n / 1e3)}k` : `$${n.toFixed(0)}`;
-
 function fmtDate(iso: string | null) {
   if (!iso) return null;
   const d = new Date(`${iso}T00:00:00Z`);
@@ -492,6 +488,368 @@ function MatchupCard({
   );
 }
 
+/* ── who's running ─────────────────────────────────────────────────────────
+ *
+ * The next election, placed above the last one.
+ *
+ * A panel that opens on whoever already holds the seat quietly tells the
+ * reader that the job is taken. The undecided part is the people trying to
+ * take it, so they lead and the sitting member becomes context underneath.
+ *
+ * Money raised orders the list and scales the bars because it is the only
+ * comparable number the bulk FEC filings carry for every filer. It is money,
+ * not votes and not polling — a long bar is a war chest and nothing else, and
+ * the caption under the list says so. Filing is registration with the FEC,
+ * which is not the same as a certified place on the ballot.
+ */
+
+const isSeatHolder = (c: Candidate) => c.sitting === true || c.status === "incumbent";
+
+const statusTag = (c: Candidate) =>
+  c.status === "open seat" ? "Open seat"
+    : c.status === "challenger" ? "Challenger"
+      : c.status ?? "Filed";
+
+/** Last name, ignoring generational suffixes — "Paxton Jr." is a Paxton. */
+const SUFFIX = new Set(["jr", "sr", "ii", "iii", "iv", "v"]);
+function surname(name: string): string {
+  const parts = name.toLowerCase().replace(/[.,]/g, "").trim().split(/\s+/)
+    .filter((t) => !SUFFIX.has(t));
+  return parts[parts.length - 1] ?? "";
+}
+
+interface OfficeField {
+  office: string;
+  cycle: number;
+  challengers: Candidate[];
+  seated: Candidate[];
+  /** Holders of this seat with no filing this cycle — still context. */
+  otherHolders: Holder[];
+  max: number;
+  filed: number;
+  challengerMoney: number;
+  seatedMoney: number;
+}
+
+/**
+ * Split the filer list into one race per office.
+ *
+ * The API returns every filing for a division rather than one office's, so a
+ * state can carry a Senate race and a governor's race in the same array. They
+ * are separate contests and must not share a money scale — a $68m Senate haul
+ * would flatten every governor's bar to a sliver of a race it has nothing to
+ * do with.
+ */
+function buildFields(cands: Candidate[], holders: Holder[]): OfficeField[] {
+  const cycle = cands.length ? Math.max(...cands.map((c) => c.cycle)) : null;
+  const live = cycle == null ? [] : cands.filter((c) => c.cycle === cycle);
+
+  const offices = [...new Set([
+    ...live.map((c) => c.office),
+    ...holders.map((h) => h.office),
+  ])];
+
+  // bioguide first, the same join the API uses. Where a filing carries no
+  // bioguide the exact name is not enough either: the FEC files Ted Cruz as
+  // "Rafael Edward Ted Cruz" and John Cornyn as "John Sen Cornyn", so a
+  // strict match listed both men twice — once as a filer, once as a holder
+  // with "no filing this cycle" beside a seat they had in fact filed for.
+  // Party plus surname closes that, and a collision there would only merge
+  // two same-party candidates sharing a surname, which loses a row rather
+  // than inventing one.
+  const filedAlready = (h: Holder, pool: Candidate[]) => pool.some((c) => {
+    if (h.bioguide && c.bioguide) return c.bioguide === h.bioguide;
+    if (c.name === h.name) return true;
+    return c.party === h.party && surname(c.name) === surname(h.name);
+  });
+
+  return offices
+    .map((office) => {
+      const pool = live.filter((c) => c.office === office);
+      const seated = pool.filter(isSeatHolder)
+        .sort((a, b) => b.receipts - a.receipts);
+      const challengers = pool.filter((c) => !isSeatHolder(c))
+        .sort((a, b) => b.receipts - a.receipts);
+      return {
+        office,
+        cycle: cycle ?? 0,
+        challengers,
+        seated,
+        otherHolders: holders.filter(
+          (h) => h.office === office && !filedAlready(h, pool)),
+        max: Math.max(...pool.map((c) => c.receipts), 1),
+        filed: pool.length,
+        challengerMoney: challengers.reduce((t, c) => t + c.receipts, 0),
+        seatedMoney: seated.reduce((t, c) => t + c.receipts, 0),
+      };
+    })
+    .filter((f) => f.challengers.length || f.seated.length || f.otherHolders.length)
+    .sort((a, b) => b.filed - a.filed);
+}
+
+function MoneyBar({ value, max, party, muted }: {
+  value: number; max: number; party: string; muted?: boolean;
+}) {
+  const pct = max > 0 ? Math.max(0, Math.min(100, (value / max) * 100)) : 0;
+  return (
+    <span className={`mt-1 block w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700 ${
+      muted ? "h-[3px]" : "h-1.5"
+    }`}>
+      <span
+        className="block h-full rounded-full"
+        style={{
+          width: `${pct}%`,
+          background: partyFill(party),
+          opacity: muted ? 0.5 : 1,
+          transition: "width 600ms cubic-bezier(0.22,1,0.36,1)",
+        }}
+      />
+    </span>
+  );
+}
+
+/** A challenger, at full weight. */
+function ChallengerRow({ c, max, onOpen }: {
+  c: Candidate; max: number; onOpen?: () => void;
+}) {
+  return (
+    <button
+      onClick={onOpen}
+      disabled={!onOpen}
+      className="mb-1.5 block w-full rounded-lg border border-black/5 px-2.5 py-2 text-left hover:bg-slate-50 disabled:cursor-default dark:border-white/5 dark:hover:bg-slate-800"
+    >
+      <div className="flex items-center gap-2.5">
+        <Portrait src={c.photo} name={c.name} party={c.party} size={40} />
+        <span className="min-w-0 flex-1">
+          <span className="flex items-baseline justify-between gap-2">
+            <span className="min-w-0 truncate text-xs font-semibold text-slate-900 dark:text-white">
+              {c.name}
+            </span>
+            <span className={`shrink-0 font-mono text-[10px] font-bold ${partyText(c.party)}`}>
+              {c.party}
+            </span>
+          </span>
+          <span className="mt-0.5 flex items-baseline justify-between gap-2">
+            <span className="shrink-0 rounded-[2px] border border-cyan-500/30 bg-cyan-500/10 px-1 py-px font-mono text-[8px] font-bold uppercase tracking-wider text-cyan-700 dark:text-cyan-300">
+              {statusTag(c)}
+            </span>
+            <span className="shrink-0 text-[10px] font-medium tabular-nums text-slate-600 dark:text-slate-300">
+              {c.receipts > 0 ? moneyLabel(c.receipts) : "nothing reported"}
+            </span>
+          </span>
+          <MoneyBar value={c.receipts} max={max} party={c.party} />
+        </span>
+      </div>
+    </button>
+  );
+}
+
+/** A sitting member, deliberately quieter. */
+function SeatHolderRow({
+  name, party, photo, sub, receipts, max, onOpen,
+}: {
+  name: string; party: string; photo?: string | null; sub: string;
+  receipts: number | null; max: number; onOpen?: () => void;
+}) {
+  return (
+    <button
+      onClick={onOpen}
+      disabled={!onOpen}
+      className="mb-1 block w-full rounded-lg px-2 py-1.5 text-left hover:bg-slate-50 disabled:cursor-default dark:hover:bg-slate-800/60"
+    >
+      <div className="flex items-center gap-2">
+        <Portrait src={photo} name={name} party={party} size={28} />
+        <span className="min-w-0 flex-1">
+          <span className="flex items-baseline justify-between gap-2">
+            <span className="min-w-0 truncate text-[11px] font-medium text-slate-600 dark:text-slate-300">
+              {name}
+              <span className={`ml-1 font-mono text-[9px] font-bold ${partyText(party)}`}>
+                {party}
+              </span>
+            </span>
+            {receipts != null && receipts > 0 && (
+              <span className="shrink-0 text-[10px] tabular-nums text-slate-400">
+                {moneyLabel(receipts)}
+              </span>
+            )}
+          </span>
+          <span className="block truncate text-[9px] text-slate-400">{sub}</span>
+          {receipts != null && receipts > 0 && (
+            <MoneyBar value={receipts} max={max} party={party} muted />
+          )}
+        </span>
+      </div>
+    </button>
+  );
+}
+
+function OfficeRace({
+  f, holders, onSelectPerson, onSelectCandidate,
+}: {
+  f: OfficeField;
+  holders: Holder[];
+  onSelectPerson?: (h: Holder) => void;
+  onSelectCandidate?: (c: { fecId?: string; name: string }) => void;
+}) {
+  const TOP = 5;
+  const [expanded, setExpanded] = useState(false);
+  const shown = expanded ? f.challengers : f.challengers.slice(0, TOP);
+  const hidden = f.challengers.length - shown.length;
+
+  const holderFor = (c: Candidate) => holders.find(
+    (h) => (c.bioguide && h.bioguide === c.bioguide) || h.name === c.name) ?? null;
+
+  // A sitting member routes into their own record where we have one; a
+  // challenger has no officeholder page to route to.
+  const openSeated = (c: Candidate) => {
+    const h = holderFor(c);
+    if (h && onSelectPerson) return () => onSelectPerson(h);
+    if (onSelectCandidate) return () => onSelectCandidate({ fecId: c.fec_id, name: c.name });
+    return undefined;
+  };
+  const openChallenger = (c: Candidate) => (onSelectCandidate
+    ? () => onSelectCandidate({ fecId: c.fec_id, name: c.name })
+    : undefined);
+
+  const ratio = f.seatedMoney > 0 ? f.challengerMoney / f.seatedMoney : null;
+
+  return (
+    <div className="mb-3">
+      <div className="mb-1.5 flex items-baseline justify-between gap-2 border-b border-cyan-500/20 pb-1">
+        <span className="truncate font-mono text-[9px] font-bold uppercase tracking-[0.18em] text-cyan-700 dark:text-cyan-300">
+          {f.cycle} · {OFFICE_LABEL[f.office] ?? f.office}
+        </span>
+        {f.filed > 0 && (
+          <span className="shrink-0 font-mono text-[9px] uppercase tracking-wider text-slate-400">
+            {f.filed} filed
+          </span>
+        )}
+      </div>
+
+      {shown.map((c) => (
+        <ChallengerRow
+          key={c.fec_id || c.name}
+          c={c}
+          max={f.max}
+          onOpen={openChallenger(c)}
+        />
+      ))}
+
+      {hidden > 0 && (
+        <button
+          onClick={() => setExpanded(true)}
+          className="mb-1.5 w-full rounded-lg border border-dashed border-black/10 px-2 py-1 font-mono text-[9px] uppercase tracking-wider text-slate-400 hover:text-slate-600 dark:border-white/10 dark:hover:text-slate-300"
+        >
+          +{hidden} more filed
+        </button>
+      )}
+      {expanded && f.challengers.length > TOP && (
+        <button
+          onClick={() => setExpanded(false)}
+          className="mb-1.5 w-full rounded-lg px-2 py-1 font-mono text-[9px] uppercase tracking-wider text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+        >
+          show fewer
+        </button>
+      )}
+
+      {/* Both sides of the money, stated as money. */}
+      {f.challengerMoney > 0 && f.seatedMoney > 0 && (
+        <p className="mb-1.5 rounded bg-slate-50 px-2 py-1 text-[9px] leading-relaxed text-slate-500 dark:bg-slate-800/50 dark:text-slate-400">
+          Challengers have raised{" "}
+          <span className="font-semibold tabular-nums text-slate-700 dark:text-slate-200">
+            {moneyLabel(f.challengerMoney)}
+          </span>{" "}
+          to the sitting {f.seated.length === 1 ? "member" : "members"}&rsquo;{" "}
+          <span className="font-semibold tabular-nums text-slate-700 dark:text-slate-200">
+            {moneyLabel(f.seatedMoney)}
+          </span>
+          {ratio && ratio >= 1.5 ? ` — ${ratio.toFixed(1)}× as much.` : "."}
+        </p>
+      )}
+
+      {(f.seated.length > 0 || f.otherHolders.length > 0) && (
+        <>
+          <p className="mb-1 mt-2 border-t border-black/5 pt-1.5 font-mono text-[9px] uppercase tracking-[0.18em] text-slate-400 dark:border-white/5">
+            Currently holding this seat
+          </p>
+          {f.seated.map((c) => {
+            const h = holderFor(c);
+            return (
+              <SeatHolderRow
+                key={c.fec_id || c.name}
+                name={c.name}
+                party={c.party}
+                photo={c.photo ?? h?.photo}
+                sub={[
+                  h?.term_start ? `since ${h.term_start.slice(0, 4)}` : "incumbent",
+                  h?.next_election ? `up ${h.next_election.slice(0, 4)}` : null,
+                  "running again",
+                ].filter(Boolean).join(" · ")}
+                receipts={c.receipts}
+                max={f.max}
+                onOpen={openSeated(c)}
+              />
+            );
+          })}
+          {f.otherHolders.map((h) => (
+            <SeatHolderRow
+              key={h.bioguide || h.name}
+              name={h.name}
+              party={h.party}
+              photo={h.photo}
+              sub={[
+                h.term_start ? `since ${h.term_start.slice(0, 4)}` : "in office",
+                h.next_election ? `up ${h.next_election.slice(0, 4)}` : null,
+                h.senate_class ? `class ${h.senate_class}` : null,
+                "no filing this cycle",
+              ].filter(Boolean).join(" · ")}
+              receipts={null}
+              max={f.max}
+              onOpen={onSelectPerson ? () => onSelectPerson(h) : undefined}
+            />
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+function WhosRunning({
+  fields, holders, coverageEnd, onSelectPerson, onSelectCandidate,
+}: {
+  fields: OfficeField[];
+  holders: Holder[];
+  coverageEnd: string | null;
+  onSelectPerson?: (h: Holder) => void;
+  onSelectCandidate?: (c: { fecId?: string; name: string }) => void;
+}) {
+  if (fields.length === 0) return null;
+  const anyFiled = fields.some((f) => f.filed > 0);
+  return (
+    <section className="mb-4">
+      <h3 className="mb-2 font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-slate-700 dark:text-slate-200">
+        Who&rsquo;s running
+      </h3>
+      {fields.map((f) => (
+        <OfficeRace
+          key={f.office}
+          f={f}
+          holders={holders}
+          onSelectPerson={onSelectPerson}
+          onSelectCandidate={onSelectCandidate}
+        />
+      ))}
+      {anyFiled && (
+        <p className="text-[9px] leading-relaxed text-slate-400">
+          Bars are money raised — not votes, and not a poll. Filed with the FEC
+          {coverageEnd ? `, through ${coverageEnd}` : ""}; filing is
+          registration, not a certified place on the ballot.
+        </p>
+      )}
+    </section>
+  );
+}
+
 export default function DivisionDetail({
   ocdId, name, onBack, onSelectPerson, onSelectCandidate,
 }: {
@@ -539,14 +897,12 @@ export default function DivisionDetail({
     .sort((a, b) => (a.next_election! < b.next_election! ? -1 : 1));
   const nextDay = upcoming[0]?.next_election ?? null;
 
-  // Whoever holds the seat leads the filer list. The API already ordered it by
-  // money raised, which is a real signal but not the one a reader opens a
-  // district to find — they want to know who has the job before they read who
-  // is trying to take it. Stable within each group, so money still orders the
-  // challengers.
-  const running = [...cands].sort((a, b) => Number(!!b.sitting) - Number(!!a.sitting));
+  // Challengers lead. Whoever already holds the seat is context underneath —
+  // see buildFields. The reader opens a division to find out what could
+  // change, and the incumbent is the part that already happened.
+  const fields = buildFields(cands, holders);
   const matchup = pickMatchup(generals, past);
-  const maxReceipts = Math.max(...cands.map((x) => x.receipts), 1);
+  const coverageEnd = cands[0]?.coverage_end ?? null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -572,6 +928,14 @@ export default function DivisionDetail({
 
         {!loading && !err && (
           <>
+            <WhosRunning
+              fields={fields}
+              holders={holders}
+              coverageEnd={coverageEnd}
+              onSelectPerson={onSelectPerson}
+              onSelectCandidate={onSelectCandidate}
+            />
+
             {matchup && (
               <MatchupCard
                 m={matchup}
@@ -580,37 +944,6 @@ export default function DivisionDetail({
                 onSelectPerson={onSelectPerson}
                 onSelectCandidate={onSelectCandidate}
               />
-            )}
-
-            {holders.length > 0 && (
-              <section className="mb-3">
-                <h3 className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                  {holders.length > 1 ? "Currently represented by" : "Currently held by"}
-                </h3>
-                {holders.map((h) => (
-                  <button
-                    key={h.bioguide || h.name}
-                    onClick={() => onSelectPerson?.(h)}
-                    className="mb-1.5 flex w-full items-center gap-2.5 rounded-xl border border-black/10 bg-white px-2.5 py-2.5 text-left shadow-sm hover:bg-slate-50 dark:border-white/10 dark:bg-slate-900 dark:hover:bg-slate-800"
-                  >
-                    <Portrait src={h.photo} name={h.name} party={h.party} size={48} />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-semibold text-slate-900 dark:text-white">
-                        {h.name}
-                      </span>
-                      <span className={`block truncate text-[11px] font-medium ${partyText(h.party)}`}>
-                        {h.party} · {OFFICE_LABEL[h.office] ?? h.office}
-                        {h.senate_class ? ` · class ${h.senate_class}` : ""}
-                      </span>
-                      <span className="block truncate text-[10px] text-slate-400">
-                        {h.term_start ? `since ${h.term_start.slice(0, 4)}` : "in office"}
-                        {h.next_election ? ` · up in ${h.next_election.slice(0, 4)}` : ""}
-                      </span>
-                    </span>
-                    <span className="shrink-0 text-slate-300">›</span>
-                  </button>
-                ))}
-              </section>
             )}
 
             <VoterInfo ocdId={ocdId} />
@@ -624,61 +957,6 @@ export default function DivisionDetail({
                   {fmtDate(nextDay)}
                 </p>
               </div>
-            )}
-
-            {cands.length > 0 && (
-              <section className="mb-4">
-                <h3 className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                  Running in {cands[0].cycle} ({cands.length})
-                </h3>
-                {running.map((c) => (
-                  <button key={c.fec_id || c.name}
-                    onClick={() => onSelectCandidate?.({ fecId: c.fec_id, name: c.name })}
-                    className={`mb-1.5 block w-full rounded-lg border px-2.5 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-800 ${
-                      c.sitting
-                        ? "border-slate-900/25 bg-slate-50/60 dark:border-white/25 dark:bg-slate-800/40"
-                        : "border-black/5 dark:border-white/5"
-                    }`}>
-                    <div className="flex items-center gap-2">
-                      <Portrait src={c.photo} name={c.name} party={c.party} size={34} />
-                      <span className="min-w-0 flex-1">
-                        <span className="flex items-baseline justify-between gap-2">
-                          <span className="min-w-0 truncate text-xs font-medium text-slate-900 dark:text-white">
-                            {c.name}
-                          </span>
-                          <span className={`shrink-0 text-[10px] font-semibold ${partyText(c.party)}`}>
-                            {c.party}
-                          </span>
-                        </span>
-                        <span className="flex items-baseline justify-between gap-2">
-                          <span className="truncate text-[10px] text-slate-500 dark:text-slate-400">
-                            {c.sitting && (
-                              <span className="mr-1 rounded bg-slate-900 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-white dark:bg-white dark:text-slate-900">
-                                Incumbent
-                              </span>
-                            )}
-                            {c.status ?? "filed"}
-                          </span>
-                          <span className="shrink-0 text-[10px] tabular-nums text-slate-600 dark:text-slate-300">
-                            {c.receipts > 0 ? money(c.receipts) : "no funds reported"}
-                          </span>
-                        </span>
-                      </span>
-                    </div>
-                    {/* Money raised is the only comparable signal of
-                        seriousness the bulk filings carry. */}
-                    <span className="mt-1 block h-1 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
-                      <span className={`block h-full ${partyBg(c.party)}`}
-                        style={{ width: `${(c.receipts / maxReceipts) * 100}%` }} />
-                    </span>
-                  </button>
-                ))}
-                <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
-                  Filed with the FEC{cands[0].coverage_end ? `, through ${cands[0].coverage_end}` : ""}.
-                  Filing is registration, not a place on the ballot — that needs
-                  state certification.
-                </p>
-              </section>
             )}
 
             {past.length > 0 && (
