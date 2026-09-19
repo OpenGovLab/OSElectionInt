@@ -11,7 +11,7 @@ import axios from "axios";
  * unmodified and can still be diffed against the originals.
  */
 const client = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE || "/api",
+  baseURL: import.meta.env.VITE_API_BASE || (import.meta.env.BASE_URL || "/") + "api",
   timeout: 30000,
 });
 
