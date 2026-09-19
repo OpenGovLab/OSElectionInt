@@ -128,30 +128,54 @@ all keyless. The optional keys add the Q&A panel and address-level lookup.
 
 ## Architecture
 
-```
-  SOURCES                     INGEST                    STORE                 SERVE
+```mermaid
+flowchart LR
+    subgraph SRC["Sources — all public"]
+        direction TB
+        OE["<b>OpenElections</b><br/>135 repos · 79 GB<br/><i>PRIMARY SOURCE</i>"]
+        MEDSL["MIT Election Lab<br/>MEDSL"]
+        FEC["FEC bulk data"]
+        TIGER["US Census TIGER"]
+        MISC["Wikidata · usa.gov<br/>congress-legislators"]
+    end
 
-  OpenElections ──┐
-  (135 repos,     │
-   79 GB mirror)  │      python/us_election/       ┌─ MongoDB ──┐
-                  ├───►  ingest_openelections  ───►│            │
-  MIT Election    │      ingest_medsl              │  us_margins│
-  Lab (MEDSL) ────┤      ingest_polling_places     │  us_divisions      Express :3050
-                  │      link_portraits            │  us_candidates ──► ┌──────────────┐
-  FEC bulk ───────┤      geocode_places            │  us_officeholders  │ ElectionRepo │
-                  │      build_voter_info          │  us_polling_places │  contract    │
-  Census TIGER ───┤                                └────────────┘       └──────┬───────┘
-  Wikidata  ──────┤                                       ⇅  DATA_BACKEND      │
-  usa.gov   ──────┘                                ┌─ Supabase ─┐              │
-                                                   │  Postgres  │              │
-  Census TIGER ──► ogr2ogr ─► mapshaper            │  + PostGIS │              │
-                     └─► tippecanoe ──► .pmtiles   │  + RPCs    │              │
-                                          │        │  + RLS     │              │
-                                          │        └────────────┘              │
-                                          │                                    ▼
-                                          └──────────────────────►  React 18 + MapLibre GL 5
-                                           50.8 MB, HTTP range        (globe / mercator)
-                                           requests, one archive
+    subgraph ING["Ingest — python/us_election"]
+        direction TB
+        ETL["ingest_openelections<br/>ingest_medsl<br/>ingest_polling_places<br/>link_portraits<br/>geocode_places<br/>build_voter_info"]
+        TILE["ogr2ogr → mapshaper<br/>→ tippecanoe"]
+    end
+
+    subgraph STORE["Store — selected by DATA_BACKEND"]
+        direction TB
+        MONGO[("MongoDB<br/>us_margins · us_divisions<br/>us_candidates · us_officeholders")]
+        SUPA[("Supabase / Postgres 17<br/>PostGIS · pg_trgm<br/>RPCs · RLS")]
+    end
+
+    PM["<b>us-divisions.pmtiles</b><br/>50.8 MB · one archive<br/>HTTP range requests"]
+
+    REPO["<b>Express :3050</b><br/>ElectionRepo contract<br/><i>one interface, two backends</i>"]
+
+    CLIENT["<b>React 18 + MapLibre GL 5</b><br/>globe / mercator · PMTiles<br/>feature-state choropleth"]
+
+    OE --> ETL
+    MEDSL --> ETL
+    FEC --> ETL
+    MISC --> ETL
+    TIGER --> TILE
+
+    ETL --> MONGO
+    ETL --> SUPA
+    MONGO -. "DATA_BACKEND=mongo" .-> REPO
+    SUPA -. "DATA_BACKEND=supabase" .-> REPO
+
+    REPO -->|"JSON — identical either way"| CLIENT
+    TILE --> PM
+    PM -->|"geometry, never via the DB"| CLIENT
+
+    style OE fill:#1e40af,stroke:#93c5fd,color:#fff
+    style PM fill:#0f766e,stroke:#5eead4,color:#fff
+    style REPO fill:#7c2d12,stroke:#fdba74,color:#fff
+    style CLIENT fill:#4c1d95,stroke:#c4b5fd,color:#fff
 ```
 
 **The join key is the OCD division ID** (`ocd-division/country:us/state:tx/cd:37`). OpenElections
