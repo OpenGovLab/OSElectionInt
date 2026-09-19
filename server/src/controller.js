@@ -1,4 +1,4 @@
-const { getModelForLanguage } = require("./db");
+const repo = require("./data");
 
 /**
  * US election map data.
@@ -7,20 +7,15 @@ const { getModelForLanguage } = require("./db");
  * and hierarchy — geometry lives in the PMTiles archive, never here) and
  * `us_margins` (party totals and a signed margin per geography per contest).
  *
- * Everything routes through getModelForLanguage so the US tenant reads the
- * en_usa database. The Bangladesh election controller does NOT do this — it is
- * bound to the default connection — which is exactly why these live in a
- * separate controller rather than being bolted onto it.
+ * Every query routes through the repo layer (src/data), so the storage engine
+ * is a deployment choice — DATA_BACKEND=mongo|supabase — and nothing in this
+ * file knows what a collection is. What stays here is HTTP: parsing and
+ * validating parameters, choosing status codes, and shaping the envelope.
  */
 
 // Margin is signed: negative = Democratic, positive = Republican.
 const OFFICES = ["president", "us_senate", "us_house", "governor"];
 const LEVELS = ["state", "cd", "county", "sldu", "sldl"];
-
-const marginsModel = (req) =>
-  getModelForLanguage("us_margins", req.query.lang, req.query.country);
-const divisionsModel = (req) =>
-  getModelForLanguage("us_divisions", req.query.lang, req.query.country);
 
 const clampInt = (v, def, min, max) => {
   const n = parseInt(v, 10);
@@ -47,43 +42,21 @@ exports.getMargins = async (req, res) => {
     const minShare = req.query.min_major_share !== undefined
       ? Number(req.query.min_major_share) : 0.8;
 
-    const Margins = marginsModel(req);
-    const q = { level, office, election_type };
     let year = parseInt(req.query.year, 10);
     if (!Number.isFinite(year)) {
       // default to the most recent year that actually has data for this cut
-      const latest = await Margins.find(q).sort({ year: -1 }).limit(1).lean();
-      if (!latest.length) return res.json({ success: true, data: { year: null, rows: [] } });
-      year = latest[0].year;
+      year = await repo.latestYear({ level, office, electionType: election_type });
+      if (year === null) return res.json({ success: true, data: { year: null, rows: [] } });
     }
-    q.year = year;
-    if (minShare > 0) q.major_share = { $gte: minShare };
 
-    const rows = await Margins.find(q, {
-      _id: 0, ocd_id: 1, margin: 1, winner_party: 1, votes: 1, total: 1, major_share: 1,
-    }).lean();
+    const rows = await repo.margins({
+      level, office, electionType: election_type, year, minMajorShare: minShare,
+    });
 
     res.json({ success: true, data: { year, level, office, election_type, count: rows.length, rows } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
-};
-
-/**
- * `us_race_candidates` carries no `level` field — the level is implicit in the
- * shape of the OCD id, so a level filter has to be expressed as one.
- *
- * Only two shapes are actually populated: bare state ids and `/cd:` ids. There
- * are no county-level candidate rows at all (checked: 25,160 cd + 14,236
- * state, nothing else), which is why a county cut legitimately returns an
- * empty list rather than an error — the client omits the section.
- */
-const LEVEL_OCD_PATTERN = {
-  state: "^ocd-division/country:us/state:[a-z]{2}$",
-  cd: "/cd:",
-  county: "/county:",
-  sldu: "/sldu:",
-  sldl: "/sldl:",
 };
 
 /**
@@ -114,6 +87,13 @@ const LEVEL_OCD_PATTERN = {
  * client pairs them on `party`, which is why at most one candidate per party
  * is returned: it keeps that join unambiguous. A share shown next to a margin
  * can then never disagree with it, because both came from the same record.
+ *
+ * `us_race_candidates` carries no `level` field — the level is implicit in
+ * the shape of the OCD id, so the repo expresses a level filter as one. Only
+ * two shapes are actually populated: bare state ids and `/cd:` ids. There are
+ * no county-level candidate rows at all (checked: 25,160 cd + 14,236 state,
+ * nothing else), which is why a county cut legitimately returns an empty list
+ * rather than an error — the client omits the section.
  */
 exports.getTopCandidates = async (req, res) => {
   try {
@@ -125,59 +105,19 @@ exports.getTopCandidates = async (req, res) => {
       return res.status(400).json({ success: false, message: `office must be one of ${OFFICES}` });
     }
 
-    const Cands = getModelForLanguage(
-      "us_race_candidates", req.query.lang, req.query.country,
-    );
-    const q = { office, election_type, ocd_id: { $regex: LEVEL_OCD_PATTERN[level] } };
-
     let year = parseInt(req.query.year, 10);
     if (!Number.isFinite(year)) {
-      const latest = await Cands.find(q).sort({ year: -1 }).limit(1).lean();
-      if (!latest.length) {
+      year = await repo.latestCandidateYear({
+        level, office, electionType: election_type,
+      });
+      if (year === null) {
         return res.json({ success: true, data: { year: null, level, office, election_type, count: 0, rows: [] } });
       }
-      year = latest[0].year;
     }
-    q.year = year;
 
-    const [grouped, holders] = await Promise.all([
-      Cands.aggregate([
-        { $match: q },
-        // Collapse the spelling variants: group to one entry per party and
-        // keep the best-voted spelling as the display name. Votes are summed
-        // only to ORDER the parties — the figure is never returned.
-        { $sort: { ocd_id: 1, votes: -1 } },
-        { $group: {
-          _id: { ocd_id: "$ocd_id", party: "$party" },
-          votes: { $sum: "$votes" },
-          name: { $first: "$name" },
-          photo: { $first: "$photo" },
-          bioguide: { $first: "$bioguide" },
-        } },
-        { $sort: { "_id.ocd_id": 1, votes: -1 } },
-        { $group: {
-          _id: "$_id.ocd_id",
-          top: { $push: {
-            name: "$name", party: "$_id.party",
-            photo: "$photo", bioguide: "$bioguide",
-          } },
-        } },
-        { $project: { _id: 0, ocd_id: "$_id", top: { $slice: ["$top", 2] } } },
-      ]),
-      // Same bioguide join getDivision uses, for the same reason: a name match
-      // put the wrong Begich on the page once already. A candidate with no
-      // bioguide is simply never flagged, which is the right answer for a
-      // challenger who has never held federal office.
-      getModelForLanguage("us_officeholders", req.query.lang, req.query.country)
-        .find({ office }, { _id: 0, bioguide: 1 }).lean(),
-    ]);
-
-    const sitting = new Set(holders.map((h) => h.bioguide).filter(Boolean));
-    const rows = grouped.map((r) => ({
-      ocd_id: r.ocd_id,
-      top: r.top.map((c) => (c.bioguide && sitting.has(c.bioguide)
-        ? { ...c, sitting: true } : c)),
-    }));
+    const rows = await repo.topCandidates({
+      level, office, electionType: election_type, year,
+    });
 
     res.json({ success: true, data: { year, level, office, election_type, count: rows.length, rows } });
   } catch (err) {
@@ -193,16 +133,7 @@ exports.getTopCandidates = async (req, res) => {
 exports.getYears = async (req, res) => {
   try {
     const { level = "state", election_type = "general" } = req.query;
-    const Margins = marginsModel(req);
-    const rows = await Margins.aggregate([
-      { $match: { level, election_type } },
-      { $group: { _id: { year: "$year", office: "$office" }, n: { $sum: 1 } } },
-      { $sort: { "_id.year": -1 } },
-    ]);
-    const byOffice = {};
-    for (const r of rows) {
-      (byOffice[r._id.office] ||= []).push({ year: r._id.year, count: r.n });
-    }
+    const byOffice = await repo.years({ level, electionType: election_type });
     res.json({ success: true, data: byOffice });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -222,23 +153,11 @@ exports.getYears = async (req, res) => {
 exports.getOfficeholders = async (req, res) => {
   try {
     const { office, state, up_by: upBy } = req.query;
-    const q = {};
-    if (office) {
-      if (!OFFICES.includes(office)) {
-        return res.status(400).json({ success: false, message: `office must be one of ${OFFICES}` });
-      }
-      q.office = office;
+    if (office && !OFFICES.includes(office)) {
+      return res.status(400).json({ success: false, message: `office must be one of ${OFFICES}` });
     }
-    if (state) q.state = String(state).toUpperCase();
-    if (upBy) q.next_election = { $lte: String(upBy) };
 
-    const rows = await getModelForLanguage(
-      "us_officeholders", req.query.lang, req.query.country,
-    ).find(q, {
-      _id: 0, ocd_id: 1, office: 1, state: 1, district: 1, name: 1,
-      party: 1, next_election: 1, term_end: 1, senate_class: 1, url: 1,
-      photo: 1, bioguide: 1,
-    }).lean();
+    const rows = await repo.officeholders({ office, state, upBy });
 
     res.json({ success: true, data: { count: rows.length, rows } });
   } catch (err) {
@@ -263,58 +182,10 @@ exports.getDivision = async (req, res) => {
       return res.status(400).json({ success: false, message: "ocd_id is required" });
     }
     const limit = clampInt(req.query.limit, 40, 1, 200);
-    const [division, history, holders, candidates, pastCandidates] = await Promise.all([
-      // .collection bypasses Mongoose casting: these documents use the OCD id
-      // as their _id, and the dynamically-built model assumes ObjectId.
-      divisionsModel(req).collection.findOne(
-        { _id: ocdId }, { projection: { centroid: 0, aliases: 0 } },
-      ),
-      marginsModel(req)
-        .find({ ocd_id: ocdId }, { _id: 0, year: 1, office: 1, district: 1,
-          election_type: 1, margin: 1, winner_party: 1, votes: 1, total: 1, major_share: 1 })
-        .sort({ year: -1, office: 1 }).limit(limit).lean(),
-      getModelForLanguage("us_officeholders", req.query.lang, req.query.country)
-        .find({ ocd_id: ocdId }, { _id: 0, name: 1, party: 1, office: 1,
-          next_election: 1, term_end: 1, term_start: 1, senate_class: 1,
-          url: 1, bioguide: 1, ideology: 1, committees: 1, finance: 1,
-          photo: 1 })
-        .lean(),
-      // Everyone who has FILED for this seat this cycle — incumbents and
-      // challengers. Ordered by money raised, which is the only comparable
-      // signal of seriousness the bulk data carries; a third of filers have
-      // raised nothing at all.
-      getModelForLanguage("us_candidates", req.query.lang, req.query.country)
-        .find({ ocd_id: ocdId }, { _id: 0, name: 1, party: 1, status: 1,
-          office: 1, cycle: 1, receipts: 1, cash_on_hand: 1,
-          individual_contrib: 1, pac_contrib: 1, ballot_status: 1,
-          coverage_end: 1, photo: 1, bioguide: 1, fec_id: 1 })
-        .sort({ cycle: -1, receipts: -1 }).limit(40).lean(),
-      // Who actually appeared on past ballots here. us_margins only knows how
-      // a place voted by party; this is who they were voting for.
-      getModelForLanguage("us_race_candidates", req.query.lang, req.query.country)
-        .find({ ocd_id: ocdId, election_type: "general" },
-          { _id: 0, year: 1, office: 1, district: 1, name: 1, party: 1,
-            votes: 1, vote_share: 1, led_in_data: 1, photo: 1, bioguide: 1 })
-        .sort({ year: -1, votes: -1 }).limit(80).lean(),
-    ]);
-    if (!division) return res.status(404).json({ success: false, message: "unknown division" });
+    const data = await repo.division(ocdId, limit);
+    if (!data) return res.status(404).json({ success: false, message: "unknown division" });
 
-    // Who holds this seat right now, flagged on both candidate lists so the
-    // UI can lead with them instead of re-deriving incumbency three times.
-    //
-    // The join is on bioguide, not on the name. Name matching is what put the
-    // wrong Begich and the wrong Paul on the page during the portrait link,
-    // and it is the same risk here; a bioguide is the person. Candidates with
-    // no bioguide simply are not flagged, which is the correct answer for a
-    // challenger who has never held federal office.
-    const sitting = new Set(holders.map((h) => h.bioguide).filter(Boolean));
-    const flag = (r) => (r.bioguide && sitting.has(r.bioguide) ? { ...r, sitting: true } : r);
-
-    res.json({ success: true, data: {
-      division, history, holders,
-      candidates: candidates.map(flag),
-      pastCandidates: pastCandidates.map(flag),
-    } });
+    res.json({ success: true, data });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -342,11 +213,6 @@ exports.chat = async (req, res) => {
   }
 };
 
-/** Loose name key so "Henry R. Cuellar" and "Cuellar, Henry" collapse. */
-const nameKey = (n) =>
-  String(n || "").toLowerCase().replace(/[^a-z\s]/g, " ")
-    .split(/\s+/).filter((w) => w.length > 2).sort().join(" ");
-
 /**
  * GET /api/us-election/candidate?fec_id=...  (or ?name=&ocd_id=)
  *
@@ -361,60 +227,12 @@ exports.getCandidate = async (req, res) => {
     if (!fecId && !name) {
       return res.status(400).json({ success: false, message: "fec_id or name is required" });
     }
-    const Cand = getModelForLanguage("us_candidates", req.query.lang, req.query.country);
-    const q = fecId ? { fec_id: String(fecId) } : { name: String(name) };
-    if (!fecId && ocdId) q.ocd_id = String(ocdId);
-    const candidate = await Cand.findOne(q, { _id: 0 }).lean();
-    if (!candidate) {
+    const data = await repo.candidateByFec({ fecId, name, ocdId });
+    if (!data) {
       return res.status(404).json({ success: false, message: "candidate not found" });
     }
 
-    // A sitting member's record lives in us_officeholders. Join on bioguide
-    // where the candidate carries one, and on a loose name key only where it
-    // does not, because the two feeds spell the same person differently:
-    // "Eli Crane" against "Elijah Crane", "Jim Himes" against "James A.
-    // Himes", Sanchez against Sánchez, and the FEC's own "Neal Patrick Md,
-    // Facs Dunn". 88 sitting members lost their record to those spellings and
-    // were rendered as challengers with no voting history, which is not a
-    // missing field but a false statement about an incumbent.
-    //
-    // The asymmetry matters: every officeholder carries a bioguide, so a
-    // candidate that HAS one and matches none of them is definitively not a
-    // sitting member. Falling back to the name there would reintroduce exactly
-    // the wrong-person merge this removes — the Begich and Paul problem, where
-    // two people of one name run in one state.
-    const Holders = getModelForLanguage(
-      "us_officeholders", req.query.lang, req.query.country,
-    );
-    const HOLDER_FIELDS = {
-      _id: 0, name: 1, party: 1, office: 1, district: 1, ocd_id: 1,
-      term_start: 1, term_end: 1, next_election: 1, senate_class: 1, url: 1,
-      ideology: 1, committees: 1, finance: 1, bioguide: 1, photo: 1,
-    };
-    let record = null;
-    if (candidate.bioguide) {
-      record = await Holders.findOne({ bioguide: candidate.bioguide }, HOLDER_FIELDS).lean();
-    } else {
-      const holders = await Holders.find({ state: candidate.state }, HOLDER_FIELDS).lean();
-      const key = nameKey(candidate.name);
-      record = holders.find((h) => nameKey(h.name) === key) || null;
-    }
-
-    // Everyone else filed for the same seat this cycle.
-    const opponents = await Cand.find(
-      { ocd_id: candidate.ocd_id, cycle: candidate.cycle,
-        fec_id: { $ne: candidate.fec_id } },
-      { _id: 0, name: 1, party: 1, status: 1, receipts: 1, fec_id: 1, photo: 1 },
-    ).sort({ receipts: -1 }).limit(12).lean();
-
-    // How this seat has voted before, for context on the race.
-    const history = await getModelForLanguage(
-      "us_margins", req.query.lang, req.query.country,
-    ).find({ ocd_id: candidate.ocd_id, election_type: "general" },
-      { _id: 0, year: 1, office: 1, margin: 1, winner_party: 1, total: 1 })
-      .sort({ year: -1 }).limit(6).lean();
-
-    res.json({ success: true, data: { candidate, record, opponents, history } });
+    res.json({ success: true, data });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -429,33 +247,9 @@ exports.searchPeople = async (req, res) => {
   try {
     const q = String(req.query.q || "").trim();
     if (q.length < 2) return res.json({ success: true, data: { rows: [] } });
-    const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
 
-    const [cands, holders] = await Promise.all([
-      getModelForLanguage("us_candidates", req.query.lang, req.query.country)
-        .find({ name: re }, { _id: 0, name: 1, party: 1, status: 1, office: 1,
-          state: 1, district: 1, ocd_id: 1, cycle: 1, receipts: 1, fec_id: 1,
-          photo: 1, bioguide: 1 })
-        .sort({ receipts: -1 }).limit(15).lean(),
-      getModelForLanguage("us_officeholders", req.query.lang, req.query.country)
-        .find({ name: re }, { _id: 0, name: 1, party: 1, office: 1, state: 1,
-          district: 1, ocd_id: 1, next_election: 1, photo: 1, bioguide: 1 })
-        .limit(10).lean(),
-    ]);
+    const rows = await repo.searchPeople(q);
 
-    // De-duplicate: a sitting member usually appears in both feeds. Bioguide
-    // first, since the two feeds spell people differently and a name-only
-    // check leaves an incumbent listed twice; the name key still catches the
-    // candidate rows that carry no bioguide.
-    const seenBio = new Set(cands.map((c) => c.bioguide).filter(Boolean));
-    const seenName = new Set(cands.map((c) => nameKey(c.name)));
-    const rows = [
-      ...cands.map((c) => ({ ...c, kind: "candidate" })),
-      ...holders
-        .filter((h) => !(h.bioguide && seenBio.has(h.bioguide))
-                    && !seenName.has(nameKey(h.name)))
-        .map((h) => ({ ...h, kind: "officeholder" })),
-    ];
     res.json({ success: true, data: { rows } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -480,72 +274,15 @@ exports.getRacePoints = async (req, res) => {
     const cycle = parseInt(req.query.cycle, 10) || 2026;
     const minReceipts = req.query.min_receipts !== undefined
       ? Number(req.query.min_receipts) : 5000;
-    const match = { cycle };
-    if (req.query.office) {
-      if (!OFFICES.includes(req.query.office)) {
-        return res.status(400).json({ success: false, message: `office must be one of ${OFFICES}` });
-      }
-      match.office = req.query.office;
+    if (req.query.office && !OFFICES.includes(req.query.office)) {
+      return res.status(400).json({ success: false, message: `office must be one of ${OFFICES}` });
     }
-    if (minReceipts > 0) match.receipts = { $gte: minReceipts };
 
-    const Cand = getModelForLanguage("us_candidates", req.query.lang, req.query.country);
-    const grouped = await Cand.aggregate([
-      { $match: match },
-      { $sort: { receipts: -1 } },
-      { $group: {
-        _id: { ocd_id: "$ocd_id", office: "$office" },
-        state: { $first: "$state" },
-        district: { $first: "$district" },
-        candidates: { $sum: 1 },
-        total_raised: { $sum: "$receipts" },
-        top: { $push: { name: "$name", party: "$party", status: "$status", receipts: "$receipts" } },
-      } },
-      { $project: { candidates: 1, total_raised: 1, state: 1, district: 1,
-        top: { $slice: ["$top", 4] } } },
-    ]);
-    if (!grouped.length) return res.json({ success: true, data: { cycle, features: [] } });
+    const features = await repo.racePoints({
+      cycle, office: req.query.office, minReceipts,
+    });
+    if (!features.length) return res.json({ success: true, data: { cycle, features: [] } });
 
-    // Centroids live on us_divisions; geometry itself is in the PMTiles archive.
-    const ids = [...new Set(grouped.map((g) => g._id.ocd_id))];
-    const divs = await divisionsModel(req).collection.find(
-      { _id: { $in: ids } }, { projection: { _id: 1, name: 1, centroid: 1, level: 1 } },
-    ).toArray();
-    const byId = new Map(divs.map((d) => [d._id, d]));
-
-    const features = [];
-    for (const g of grouped) {
-      const d = byId.get(g._id.ocd_id);
-      if (!d?.centroid?.coordinates) continue;
-      // Which party has raised most here — the only funding signal the bulk
-      // filings support. Explicitly NOT a prediction of the outcome.
-      const byParty = {};
-      for (const c of g.top) byParty[c.party] = (byParty[c.party] || 0) + c.receipts;
-      const leadParty = Object.entries(byParty).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "OTH";
-      // Census names a district "Congressional District 4" with no state in
-      // it, so 435 of them read identically on a national map. Readers say
-      // "TX-28"; that is what the label should say.
-      const label = g._id.office === "us_house" && g.state && g.district
-        ? `${g.state}-${g.district}`
-        : d.name;
-      features.push({
-        type: "Feature",
-        geometry: d.centroid,
-        properties: {
-          ocd_id: g._id.ocd_id,
-          office: g._id.office,
-          name: d.name,
-          label,
-          level: d.level,
-          state: g.state,
-          district: g.district,
-          candidates: g.candidates,
-          total_raised: Math.round(g.total_raised),
-          lead_party: leadParty,
-          top: g.top.map((c) => `${c.name}|${c.party}|${Math.round(c.receipts)}`).join(";"),
-        },
-      });
-    }
     res.json({ success: true, data: { cycle, count: features.length, features } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -566,24 +303,7 @@ exports.getDivisionPoints = async (req, res) => {
     if (!LEVELS.includes(level)) {
       return res.status(400).json({ success: false, message: `level must be one of ${LEVELS}` });
     }
-    const rows = await divisionsModel(req).collection.find(
-      { level }, { projection: { _id: 1, name: 1, state: 1, centroid: 1, level: 1 } },
-    ).toArray();
-    const features = rows
-      .filter((d) => d?.centroid?.coordinates)
-      .map((d) => ({
-        type: "Feature",
-        geometry: d.centroid,
-        properties: {
-          ocd_id: d._id,
-          // Census calls every district "Congressional District 4"; on a
-          // national map 435 of those read identically.
-          label: level === "cd" && d.state
-            ? `${d.state}-${String(d.name).replace(/\D+/g, "") || "AL"}`
-            : d.name,
-          state: d.state,
-        },
-      }));
+    const features = await repo.divisionPoints({ level });
     res.json({ success: true, data: { level, count: features.length, features } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -604,47 +324,8 @@ exports.getDivisionPoints = async (req, res) => {
  */
 exports.getCapabilities = async (req, res) => {
   try {
-    const has = async (name) => {
-      try {
-        const n = await getModelForLanguage(name, req.query.lang, req.query.country)
-          .estimatedDocumentCount();
-        return n > 0;
-      } catch {
-        return false;
-      }
-    };
-    // Home points are a FIELD on us_candidates, not a collection, so the
-    // presence check has to count documents that actually carry one. Checking
-    // the collection would report the overlay available the moment candidates
-    // land and leave an empty layer toggled on until the places ingest runs.
-    const hasHomes = async () => {
-      try {
-        return (await getModelForLanguage("us_candidates", req.query.lang, req.query.country)
-          .countDocuments({ "home.lat": { $exists: true } }, { limit: 1 })) > 0;
-      } catch {
-        return false;
-      }
-    };
-    // Only counts rows that actually carry coordinates: the collection is
-    // populated long before the geocoder runs, and an overlay offered against
-    // unplaced rows toggles on to an empty map.
-    const hasPolls = async () => {
-      try {
-        return (await getModelForLanguage("us_polling_places", req.query.lang, req.query.country)
-          .countDocuments({ loc: { $exists: true } }, { limit: 1 })) > 0;
-      } catch {
-        return false;
-      }
-    };
-    const [races, news, margins, officeholders, homes, polls] = await Promise.all([
-      has("us_candidates"), has("us_election_news"),
-      has("us_margins"), has("us_officeholders"), hasHomes(), hasPolls(),
-    ]);
-    res.json({
-      success: true,
-      data: { races, electionNews: news, margins, officeholders,
-              candidateHomes: homes, pollingPlaces: polls },
-    });
+    const data = await repo.capabilities();
+    res.json({ success: true, data });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -668,62 +349,9 @@ exports.getCapabilities = async (req, res) => {
 exports.getNewsPoints = async (req, res) => {
   try {
     const limit = clampInt(req.query.limit, 400, 1, 2000);
-    const News = getModelForLanguage("us_election_news", req.query.lang, req.query.country);
-    const grouped = await News.aggregate([
-      { $group: {
-        _id: "$ocd_id",
-        articles: { $sum: 1 },
-        people: { $addToSet: "$person" },
-        left: { $sum: { $ifNull: ["$spectrum.left", 0] } },
-        center: { $sum: { $ifNull: ["$spectrum.center", 0] } },
-        right: { $sum: { $ifNull: ["$spectrum.right", 0] } },
-        // Weighted lean per article, averaged across the division's coverage.
-        // rated counts only articles whose outlet carries an AllSides rating.
-        tiltSum: { $sum: { $multiply: [
-          { $ifNull: ["$spectrum.tilt", 0] }, { $ifNull: ["$spectrum.rated", 0] } ] } },
-        rated: { $sum: { $ifNull: ["$spectrum.rated", 0] } },
-        unrated: { $sum: { $ifNull: ["$spectrum.unrated", 0] } },
-        latest: { $max: "$published_at" },
-        headline: { $first: "$title" },
-      } },
-      { $sort: { articles: -1 } },
-      { $limit: limit },
-    ]);
-    if (!grouped.length) return res.json({ success: true, data: { features: [] } });
+    const features = await repo.newsPoints({ limit });
+    if (!features.length) return res.json({ success: true, data: { features: [] } });
 
-    const ids = grouped.map((g) => g._id);
-    const divs = await divisionsModel(req).collection.find(
-      { _id: { $in: ids } }, { projection: { _id: 1, name: 1, centroid: 1, state: 1 } },
-    ).toArray();
-    const byId = new Map(divs.map((d) => [d._id, d]));
-
-    const features = [];
-    for (const g of grouped) {
-      const d = byId.get(g._id);
-      if (!d?.centroid?.coordinates) continue;
-      // -1 entirely left-rated .. +1 entirely right-rated. Null when nothing
-      // carried a rating, rather than defaulting to centre — "unknown" and
-      // "balanced" are different claims and must not render the same.
-      const tilt = g.rated > 0 ? g.tiltSum / g.rated : null;
-      features.push({
-        type: "Feature",
-        geometry: d.centroid,
-        properties: {
-          ocd_id: g._id,
-          name: d.name,
-          state: d.state,
-          articles: g.articles,
-          people: (g.people || []).slice(0, 4).join(", "),
-          people_count: (g.people || []).length,
-          tilt: tilt === null ? null : Math.round(tilt * 1000) / 1000,
-          rated: g.rated,
-          unrated: g.unrated,
-          left: g.left, center: g.center, right: g.right,
-          headline: String(g.headline || "").slice(0, 140),
-          latest: g.latest || null,
-        },
-      });
-    }
     res.json({ success: true, data: { count: features.length, features } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -755,88 +383,9 @@ exports.getCandidatePlaces = async (req, res) => {
   try {
     const cycle = clampInt(req.query.cycle, 2026, 1990, 2100);
     const limit = clampInt(req.query.limit, 600, 1, 3000);
-    const Cand = getModelForLanguage("us_candidates", req.query.lang, req.query.country);
 
-    const rows = await Cand.aggregate([
-      { $match: { cycle, "home.lat": { $exists: true } } },
-      { $sort: { receipts: -1 } },
-      { $group: {
-        _id: { city: "$home.city", state: "$home.state" },
-        lat: { $first: "$home.lat" },
-        lng: { $first: "$home.lng" },
-        candidates: { $sum: 1 },
-        // NOT a plain $sum of receipts. 88 candidates in the 2026 cycle hold
-        // two FEC candidate IDs sharing one principal campaign committee — a
-        // House member who filed for Senate keeps both — and weball reports
-        // that committee's totals under BOTH ids, so summing naively
-        // double-counts $177M nationally. $addToSet on {name, receipts}
-        // collapses the pair; two different people in one town with byte-equal
-        // receipts is not a case that occurs.
-        moneyRows: { $addToSet: { n: "$name", r: { $ifNull: ["$receipts", 0] } } },
-        po_box: { $sum: { $cond: [{ $eq: ["$home.po_box", true] }, 1, 0] } },
-        // Already sorted by receipts, so $push preserves that order and the
-        // first few are the candidates worth naming in a tooltip.
-        who: { $push: {
-          name: "$name", party: "$party", office: "$office",
-          district: "$district", ocd_id: "$ocd_id",
-          fec_id: "$fec_id", receipts: "$receipts",
-          pcc: "$pcc", bioguide: "$bioguide",
-        } },
-      } },
-      // Sum the de-duplicated set, not the rows. This has to happen inside the
-      // pipeline rather than in JS because the sort and limit below depend on
-      // it — ranking on a field computed after $limit would rank the wrong
-      // cities and quietly drop the biggest ones.
-      { $addFields: { raised: {
-        $sum: { $map: { input: "$moneyRows", as: "m", in: "$$m.r" } } } } },
-      { $sort: { raised: -1, candidates: -1 } },
-      { $limit: limit },
-    ]);
+    const features = await repo.candidatePlaces({ cycle, limit });
 
-    const features = rows.map((r) => {
-      // Same duplication seen from the other side: the pair would otherwise
-      // list one person twice. Keep the richer row, which is the filing the
-      // money actually belongs to.
-      //
-      // Identity is the principal campaign committee where there is one. That
-      // is not a heuristic — a committee belongs to one candidate, which is
-      // exactly how the double-counted filings were found, and it holds for
-      // the pair that spells the name two different ways. Bioguide is the next
-      // best key, and the name is the last resort for the 84% of filings that
-      // carry neither.
-      const identity = (w) => (w.pcc && `pcc:${w.pcc}`)
-        || (w.bioguide && `bio:${w.bioguide}`)
-        || `name:${w.name}`;
-      const byPerson = new Map();
-      for (const w of r.who || []) {
-        const k = identity(w);
-        const prev = byPerson.get(k);
-        if (!prev || (w.receipts || 0) > (prev.receipts || 0)) byPerson.set(k, w);
-      }
-      const who = [...byPerson.values()];
-      // Party counts come from the de-duplicated list too, or dem + rep can
-      // exceed the candidate count and the readout contradicts itself.
-      const dem = who.filter((w) => w.party === "DEM").length;
-      const rep = who.filter((w) => w.party === "REP").length;
-      return {
-        type: "Feature",
-        geometry: { type: "Point", coordinates: [r.lng, r.lat] },
-        properties: {
-          city: r._id.city,
-          state: r._id.state,
-          place: `${r._id.city}, ${r._id.state}`,
-          candidates: who.length,
-          raised: Math.round(r.raised || 0),
-          dem,
-          rep,
-          other: who.length - dem - rep,
-          po_box: r.po_box,
-          names: who.slice(0, 5).map((w) => w.name).join(", "),
-          // Full rows for the detail panel; the tooltip only reads `names`.
-          who: JSON.stringify(who.slice(0, 12)),
-        },
-      };
-    });
     res.json({ success: true, data: { count: features.length, features } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -871,9 +420,7 @@ exports.getVoterInfo = async (req, res) => {
     if (!/^[A-Z]{2}$/.test(state)) {
       return res.status(400).json({ success: false, message: "state must be a 2-letter code" });
     }
-    const office = await getModelForLanguage(
-      "us_voter_info", req.query.lang, req.query.country,
-    ).collection.findOne({ _id: state });
+    const office = await repo.voterInfo(state);
 
     const out = { state, office: office || null, polling: null, lookupStatus: "not_requested" };
 
@@ -1010,38 +557,17 @@ exports.getPollingPoints = async (req, res) => {
     if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) {
       return res.status(400).json({ success: false, message: "bbox=w,s,e,n is required" });
     }
-    const [w, s2, e, n] = parts;
     const limit = clampInt(req.query.limit, 800, 1, 3000);
-    const q = {
-      loc: { $geoWithin: { $box: [[w, s2], [e, n]] } },
-    };
     const year = Number(req.query.year);
-    if (Number.isFinite(year) && year > 0) q.year = year;
 
-    const rows = await getModelForLanguage(
-      "us_polling_places", req.query.lang, req.query.country,
-    ).find(q, {
-      _id: 0, name: 1, address: 1, loc: 1, year: 1, location_type: 1,
-      county_name: 1, state: 1, geo_match: 1, county_source: 1,
-    }).limit(limit).lean();
+    const features = await repo.pollingPoints({ bbox: parts, limit, year });
 
     res.json({ success: true, data: {
       historical: true,
       coverage: "2012-2020, 37 states",
-      count: rows.length,
-      capped: rows.length >= limit,
-      features: rows.map((r) => ({
-        type: "Feature",
-        geometry: r.loc,
-        properties: {
-          name: r.name, address: r.address, year: r.year,
-          location_type: r.location_type, county: r.county_name, state: r.state,
-          // Half the geocodes are interpolated along a street segment rather
-          // than a rooftop hit; a reader zoomed in on a building deserves to
-          // know which kind of pin they are looking at.
-          geo_match: r.geo_match, county_source: r.county_source,
-        },
-      })),
+      count: features.length,
+      capped: features.length >= limit,
+      features,
     } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -1059,22 +585,8 @@ exports.getPollingPoints = async (req, res) => {
  */
 exports.getStats = async (req, res) => {
   try {
-    const count = async (name, filter = {}) => {
-      try {
-        return await getModelForLanguage(name, req.query.lang, req.query.country)
-          .estimatedDocumentCount ? await getModelForLanguage(
-            name, req.query.lang, req.query.country).countDocuments(filter) : 0;
-      } catch {
-        return 0;
-      }
-    };
-    const [contests, divisions, candidates, places] = await Promise.all([
-      count("us_margins"),
-      count("us_divisions", { level: "county" }),
-      count("us_race_candidates"),
-      count("us_polling_places", { loc: { $exists: true } }),
-    ]);
-    res.json({ success: true, data: { contests, divisions, candidates, places } });
+    const data = await repo.stats();
+    res.json({ success: true, data });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
