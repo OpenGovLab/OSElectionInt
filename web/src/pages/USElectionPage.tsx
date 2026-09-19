@@ -34,6 +34,9 @@ import {
   resolveTilesUrl,
   SOURCE_ID,
 } from "@/config/usElectionMap";
+import CommandPanel, { type CommandHandle, type CommandOption, type CommandReply }
+  from "@/components/CommandPanel";
+import { type MapCommand } from "@/lib/map-commands";
 import DivisionDetail, { type Holder as DetailHolder }
   from "@/components/us-election/DivisionDetail";
 import CandidateDetail from "@/components/us-election/CandidateDetail";
@@ -1724,6 +1727,221 @@ export default function USElectionPage({
     setPlaying(false);
   }, []);
 
+  /**
+   * Division name -> where it is, for "fly to ...".
+   *
+   * /search is a PEOPLE index — it returns candidates and officeholders, and
+   * answers nothing for "Texas". Divisions are found through division-points,
+   * which carries a label and a centroid per division, cached per level
+   * because the county layer is 3,143 features and should not be fetched to
+   * answer "fly to Ohio".
+   *
+   * Levels are tried cheapest-first and the search stops at the first level
+   * that matches, so a state name never drags the county index down the wire.
+   */
+  const commandRef = useRef<CommandHandle | null>(null);
+
+  const placeIndexRef = useRef<Map<string, { ocd_id: string; label: string;
+    state: string; centre: [number, number] }[]>>(new Map());
+
+  const placesForLevel = useCallback(async (lvl: string) => {
+    const hit = placeIndexRef.current.get(lvl);
+    if (hit) return hit;
+    try {
+      const r = await apiService({
+        method: "get", url: `/us-election/division-points?level=${lvl}`,
+      });
+      const feats = (r as { data?: { data?: { features?: unknown[] } } })
+        ?.data?.data?.features ?? [];
+      const rows = (feats as {
+        geometry?: { coordinates?: [number, number] };
+        properties?: { ocd_id?: string; label?: string; state?: string };
+      }[]).flatMap((f) => {
+        const c = f.geometry?.coordinates;
+        const p = f.properties;
+        return p?.ocd_id && p.label && c
+          ? [{ ocd_id: p.ocd_id, label: p.label, state: p.state ?? "", centre: c }]
+          : [];
+      });
+      placeIndexRef.current.set(lvl, rows);
+      return rows;
+    } catch {
+      return [];
+    }
+  }, []);
+
+  /**
+   * Frame a division.
+   *
+   * Prefers the bbox from /division — a state framed by its own extent reads
+   * far better than a centroid at a guessed zoom, and unlike tile geometry it
+   * does not depend on which tiles happen to be loaded. Falls back to the
+   * centroid when the lookup fails.
+   */
+  const gotoDivision = useCallback(async (
+    d: { ocd_id: string; label: string; centre?: [number, number] },
+  ) => {
+    const map = mapRef.current;
+    if (!map) return;
+    const row: Row = { ocd_id: d.ocd_id, name: d.label, state: "", margin: null };
+    setSelected(row);
+    setDetail(row);
+    setSheetOpen(true);
+    try {
+      const r = await apiService({
+        method: "get",
+        url: `/us-election/division?ocd_id=${encodeURIComponent(d.ocd_id)}`,
+      });
+      const div = (r as { data?: { data?: { division?: { bbox?: number[];
+        name?: string; state?: string } } } })?.data?.data?.division;
+      if (div?.name) {
+        setSelected({ ocd_id: d.ocd_id, name: div.name, state: div.state ?? "", margin: null });
+        setDetail({ ocd_id: d.ocd_id, name: div.name, state: div.state ?? "", margin: null });
+      }
+      const b = div?.bbox;
+      if (b && b.length === 4) {
+        map.fitBounds([b[0], b[1], b[2], b[3]], {
+          padding: fitPadding(), duration: 1200, maxZoom: 9,
+        });
+        return;
+      }
+    } catch {
+      /* fall through to the centroid */
+    }
+    // No bbox. Only move if we actually know where this is — a person's seat
+    // resolved through /search carries no centroid, and guessing one would
+    // fly the reader somewhere confidently wrong. The panel is already open
+    // on the right division either way.
+    if (d.centre) map.flyTo({ center: d.centre, zoom: 6, duration: 1200 });
+  }, []);
+
+  const runCommand = useCallback(async (
+    c: MapCommand,
+  ): Promise<CommandReply | string> => {
+    const map = mapRef.current;
+    if (!map) return "The map is still loading.";
+
+    switch (c.type) {
+      case "zoom": {
+        map.easeTo({ zoom: map.getZoom() + c.delta, duration: 500 });
+        return c.delta > 0 ? "Zooming in." : "Zooming out.";
+      }
+      case "reset": {
+        map.fitBounds(US_BOUNDS, { padding: fitPadding(), duration: 900 });
+        return "Back to the whole country.";
+      }
+      case "coordinates": {
+        map.flyTo({ center: [c.lng, c.lat], zoom: 7, duration: 1200 });
+        return `Flying to ${c.lat}, ${c.lng}.`;
+      }
+      case "projection": {
+        setProjection(c.globe ? "globe" : "mercator");
+        return c.globe ? "Globe view." : "Flat map.";
+      }
+      case "basemap": {
+        setBasemap(c.basemap);
+        return `${c.basemap[0].toUpperCase()}${c.basemap.slice(1)} basemap.`;
+      }
+      case "office": {
+        const meta = OFFICES.find((o) => o.id === c.office);
+        if (!meta) return `I don't have a ${c.office} layer.`;
+        setOffice(meta.id);
+        return `Showing ${meta.label}.`;
+      }
+      case "level": {
+        const meta = LEVELS.find((l) => l.id === c.level);
+        if (!meta) return `I don't have a ${c.level} layer.`;
+        // Mark it as DELIBERATE, exactly as the level chips do. Without this
+        // the in-band guard treats the switch as stale and reverts it, and
+        // the command appears to do nothing.
+        pickedLevelRef.current = meta.id;
+        setAutoLevel(false);
+        setLevel(meta.id);
+        return `Showing ${meta.label.toLowerCase()}.`;
+      }
+      case "year": {
+        if (years.length && !years.includes(c.year)) {
+          const near = [...years].sort(
+            (a, b) => Math.abs(a - c.year) - Math.abs(b - c.year))[0];
+          return `No ${c.year} cut at this level. Closest is ${near}.`;
+        }
+        setYear(c.year);
+        return `Showing ${c.year}.`;
+      }
+      case "play": {
+        if (timeline.length < 2) return "There is only one cycle to show.";
+        void play();
+        return "Playing the cycles.";
+      }
+      case "layer": {
+        const meta = availableOverlays(capabilities).find((o) => o.id === c.layer);
+        if (!meta) return `The ${c.layer} layer is not available here.`;
+        setOverlays((s) => ({ ...s, [meta.id]: c.enabled }));
+        return `${meta.label} ${c.enabled ? "on" : "off"}.`;
+      }
+      case "locate": {
+        const q = c.query.trim().toLowerCase();
+        // State first: cheapest index and the most-asked-for. Then whatever
+        // the reader is already looking at, then districts, then counties.
+        const order = [...new Set(["state", level, "cd", "county"])];
+        for (const lvl of order) {
+          const rows = await placesForLevel(lvl);
+          if (!rows.length) continue;
+          const exact = rows.filter((r) => r.label.toLowerCase() === q);
+          const starts = rows.filter((r) => r.label.toLowerCase().startsWith(q));
+          const loose = rows.filter((r) => {
+            const l = r.label.toLowerCase();
+            return l.includes(q) || `${r.state} ${l}`.includes(q);
+          });
+          const found = exact.length ? exact : starts.length ? starts : loose;
+          if (!found.length) continue;
+          if (found.length === 1) {
+            await gotoDivision(found[0]);
+            return `Flying to ${found[0].label}.`;
+          }
+          const options: CommandOption[] = found.slice(0, 8).map((f) => ({
+            label: f.label,
+            hint: f.state || lvl,
+            run: () => gotoDivision(f),
+          }));
+          return {
+            text: `${found.length} places match “${c.query}”. Which one?`,
+            options,
+          };
+        }
+        // Not a place. It may still be a person, and their seat is a place.
+        try {
+          const r = await apiService({
+            method: "get",
+            url: `/us-election/search?q=${encodeURIComponent(c.query)}`,
+          });
+          const people = (r as { data?: { data?: { rows?: {
+            name: string; ocd_id?: string; party?: string; state?: string;
+          }[] } } })?.data?.data?.rows ?? [];
+          const placed = people.filter((p) => p.ocd_id).slice(0, 6);
+          if (placed.length) {
+            return {
+              text: `No place called “${c.query}”, but these people match — `
+                + "open the seat they are running for?",
+              options: placed.map((p) => ({
+                label: p.name,
+                hint: [p.party, p.state].filter(Boolean).join(" · "),
+                run: () => gotoDivision({
+                  ocd_id: p.ocd_id as string, label: p.name,
+                }),
+              })),
+            };
+          }
+        } catch {
+          /* fall through to the plain miss */
+        }
+        return `I couldn't find “${c.query}”.`;
+      }
+      default:
+        return "Type help to see what I understand.";
+    }
+  }, [level, years, timeline, play, capabilities, placesForLevel, gotoDivision]);
+
   // A level or office change invalidates the cut being animated.
   useEffect(() => { stop(); }, [level, office, stop]);
   useEffect(() => () => { if (playRef.current) cancelAnimationFrame(playRef.current); }, []);
@@ -2239,6 +2457,23 @@ export default function USElectionPage({
           </div>
         </div>
       )}
+
+      {/* Commands. Mounted as a modal <dialog>, so it sits above everything
+          without needing a z-index in this stack. */}
+      <CommandPanel onCommand={runCommand} controls={commandRef} />
+
+      {/* ⌘K opener — secondary to Ask, which is the solid-cyan primary. */}
+      <button
+        onClick={() => commandRef.current?.open()}
+        title="Command panel — drive the map by typing or speaking (⌘K)"
+        className="absolute bottom-10 right-[6.5rem] z-30 flex items-center gap-2 rounded-[4px] border border-cyan-400/40 bg-slate-900/80 px-3 py-2 font-mono text-[12px] uppercase tracking-[0.1em] text-cyan-200 backdrop-blur transition-colors hover:border-cyan-400 hover:text-cyan-100 md:bottom-auto md:right-[30.5rem] md:top-12"
+      >
+        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor"
+             strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M4 17l6-6-6-6M12 19h8" />
+        </svg>
+        <span className="hidden sm:inline">⌘K</span>
+      </button>
 
       {/* ask */}
       <button
