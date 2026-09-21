@@ -1,0 +1,75 @@
+{
+  "_comment": [
+    "Mapping from OnTheIssues' 24-topic vocabulary to the product's 19 issue",
+    "categories. This is an EDITORIAL artefact, not a derived fact: several of",
+    "the joins are arguable and some are many-to-one. It lives in its own file",
+    "so it can be argued about and revised without touching scraper code.",
+    "",
+    "Two honest gaps are recorded rather than papered over:",
+    "  unmapped_source_topics  - OnTheIssues topics with no product category",
+    "  unpopulated_categories  - product categories no OnTheIssues topic feeds",
+    "Forcing either to zero would mean inventing a correspondence."
+  ],
+  "source_vocabulary": "ontheissues.org",
+  "source_topic_count": 24,
+  "product_category_count": 19,
+
+  "map": {
+    "Health Care":          ["Healthcare and Public Health"],
+    "Budget & Economy":     ["Economy and Finance"],
+    "Corporations":         ["Economy and Finance"],
+    "Free Trade":           ["Economy and Finance"],
+    "Tax Reform":           ["Economy and Finance"],
+    "Education":            ["Education"],
+    "Foreign Policy":       ["Foreign Policy and National Security"],
+    "Homeland Security":    ["Foreign Policy and National Security"],
+    "War & Peace":          ["Foreign Policy and National Security"],
+    "Immigration":          ["Immigration"],
+    "Energy & Oil":         ["Climate Change and Environment"],
+    "Environment":          ["Climate Change and Environment"],
+    "Civil Rights":         ["Social Justice and Civil Rights"],
+    "Crime":                ["Social Justice and Civil Rights"],
+    "Families & Children":  ["Social Justice and Civil Rights"],
+    "Jobs":                 ["Labor and Employment"],
+    "Gun Control":          ["Gun Policy"],
+    "Government Reform":    ["Government Reform"],
+    "Social Security":      ["Social Welfare Programs"],
+    "Welfare & Poverty":    ["Social Welfare Programs"],
+    "Technology":           ["Science and Technology"],
+    "Drugs":                ["Drug Policy"]
+  },
+
+  "unmapped_source_topics": {
+    "Principles & Values": [
+      "OnTheIssues uses this for religion, ideology and general political",
+      "philosophy. It has no clean counterpart in the product taxonomy —",
+      "'Constitutional Issues' is about court appointments and executive",
+      "power, which is a different thing. Mapping it there would file a",
+      "candidate's statements about faith under separation of powers.",
+      "Kept and surfaced under its own name instead."
+    ]
+  },
+
+  "unpopulated_categories": {
+    "Infrastructure and Transportation": "no OnTheIssues source topic",
+    "Veterans Affairs": "no OnTheIssues source topic",
+    "Agriculture and Rural Development": "no OnTheIssues source topic",
+    "Media and Free Speech": "no OnTheIssues source topic",
+    "Constitutional Issues": "no OnTheIssues source topic; see Principles & Values note",
+    "International Development and Human Rights": "partially inside Foreign Policy, but not separable at source"
+  },
+
+  "notes": {
+    "many_to_one": [
+      "Economy and Finance draws on four source topics; Foreign Policy and",
+      "Social Justice on three each. A category's quote count is therefore a",
+      "sum across topics and is not comparable to a single-topic category."
+    ],
+    "crime_placement": [
+      "'Crime' is filed under Social Justice and Civil Rights because the",
+      "product taxonomy puts Criminal Justice Reform and Police Reform there.",
+      "OnTheIssues uses the topic for both reform and enforcement positions,",
+      "so the category mixes both stances."
+    ]
+  }
+}
