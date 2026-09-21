@@ -465,10 +465,19 @@ exports.getPositions = async (req, res) => {
     const limit = clampInt(req.query.limit, 40, 1, 200);
     const category = req.query.category ? String(req.query.category) : null;
     const ocdId = req.query.ocd_id ? String(req.query.ocd_id) : null;
-    if (!category && !ocdId) {
+    if (!category && !ocdId && !req.query.fec_id && !req.query.bioguide) {
       return res.status(400).json({
-        success: false, message: "category or ocd_id is required",
+        success: false,
+        message: "category, ocd_id, fec_id or bioguide is required",
       });
+    }
+    // A single person, when the caller already knows who they mean. Saves the
+    // client warming a whole per-state index to render one panel.
+    if (req.query.fec_id || req.query.bioguide) {
+      const person = await repo.positionsForPerson({
+        fecId: req.query.fec_id, bioguide: req.query.bioguide,
+      });
+      return res.json({ success: true, data: { person: person ?? null } });
     }
     const rows = category
       ? await repo.positionsByIssue({

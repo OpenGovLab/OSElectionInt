@@ -677,10 +677,33 @@ async function issueCategories() {
  * "little is written down", never as "this person believes nothing".
  */
 async function positionsForDivision({ ocdId }) {
+  // `ref` is a POINTER, not an ocd id — {collection, id} where id is
+  // "<ocd>|<office>|<bioguide>" for a member and "<cycle>|<fec_id>" for a
+  // filer. Matching it against an ocd id string returned nothing at all, so
+  // resolve the division's people first and look them up by their own keys.
+  const [holders, cands] = await Promise.all([
+    M(TABLES.officeholders).find({ ocd_id: ocdId }, { _id: 0, bioguide: 1 }).lean(),
+    M(TABLES.candidates).find({ ocd_id: ocdId }, { _id: 0, fec_id: 1 }).lean(),
+  ]);
+  const bios = holders.map((h) => h.bioguide).filter(Boolean);
+  const fecs = cands.map((c) => c.fec_id).filter(Boolean);
+  if (!bios.length && !fecs.length) return [];
   const rows = await M(TABLES.issuePositions)
-    .find({ ref: ocdId }, { _id: 0, topics: 0 })
+    .find({ $or: [
+      ...(bios.length ? [{ bioguide: { $in: bios } }] : []),
+      ...(fecs.length ? [{ fec_id: { $in: fecs } }] : []),
+    ] }, { _id: 0, topics: 0 })
     .sort({ total_quotes: -1 }).limit(60).lean();
   return rows;
+}
+
+/** One person's positions, by whichever id the caller holds. */
+async function positionsForPerson({ fecId, bioguide, name, state }) {
+  const q = fecId ? { fec_id: String(fecId) }
+    : bioguide ? { bioguide: String(bioguide) }
+      : { name: String(name || "") };
+  if (!fecId && !bioguide && state) q.state = String(state).toUpperCase();
+  return M(TABLES.issuePositions).findOne(q, { _id: 0 }).lean();
 }
 
 /**
@@ -812,6 +835,7 @@ module.exports = {
   issueCategories,
   positionsForDivision,
   positionsByIssue,
+  positionsForPerson,
   capabilities,
   stats,
 };
