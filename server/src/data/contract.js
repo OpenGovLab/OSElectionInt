@@ -115,6 +115,8 @@ const TABLES = {
   pollingPlaces: "us_polling_places",
   news: "us_election_news",
   voterInfo: "us_voter_info",
+  raceRoster: "us_race_roster",
+  issuePositions: "us_issue_positions",
 };
 
 const LEVELS = ["state", "county", "cd", "sldu", "sldl"];

@@ -26,6 +26,7 @@ const HOLDER_FIELDS = {
   _id: 0, name: 1, party: 1, office: 1, district: 1, ocd_id: 1,
   term_start: 1, term_end: 1, next_election: 1, senate_class: 1, url: 1,
   ideology: 1, committees: 1, finance: 1, bioguide: 1, photo: 1,
+  social: 1, wikipedia: 1, wikidata: 1, ballotpedia: 1, opensecrets: 1,
 };
 
 async function latestYear({ level, office, electionType }) {
@@ -140,7 +141,8 @@ async function division(ocdId, limit) {
       .find({ ocd_id: ocdId }, { _id: 0, name: 1, party: 1, office: 1,
         next_election: 1, term_end: 1, term_start: 1, senate_class: 1,
         url: 1, bioguide: 1, ideology: 1, committees: 1, finance: 1,
-        photo: 1 })
+        photo: 1, social: 1, wikipedia: 1, ballotpedia: 1, opensecrets: 1,
+        caucuses: 1 })
       .lean(),
     // Everyone who has FILED for this seat this cycle — incumbents and
     // challengers. Ordered by money raised, which is the only comparable
@@ -150,7 +152,8 @@ async function division(ocdId, limit) {
       .find({ ocd_id: ocdId }, { _id: 0, name: 1, party: 1, status: 1,
         office: 1, cycle: 1, receipts: 1, cash_on_hand: 1,
         individual_contrib: 1, pac_contrib: 1, ballot_status: 1,
-        coverage_end: 1, photo: 1, bioguide: 1, fec_id: 1 })
+        coverage_end: 1, photo: 1, bioguide: 1, fec_id: 1,
+        social: 1, wikipedia: 1, ballotpedia: 1, election_yr: 1 })
       .sort({ cycle: -1, receipts: -1 }).limit(40).lean(),
     // Who actually appeared on past ballots here. us_margins only knows how
     // a place voted by party; this is who they were voting for.
@@ -174,12 +177,61 @@ async function division(ocdId, limit) {
   const flag = (r) => (r.bioguide && sitting.has(r.bioguide)
     ? { ...r, sitting: true } : r);
 
+  /**
+   * Who is still actually in this race.
+   *
+   * Two separate things make a raw filing list wrong, and both are visible
+   * in Texas. First, the FEC files a candidate under the cycle their
+   * committee is active in, not the year they are on the ballot: Ted Cruz's
+   * 2026 row carries election_yr 2030, because his class-1 seat is not up.
+   * Showing him as a 2026 incumbent puts a man in a race he is not running.
+   * election_yr is certified, so it is a hard filter.
+   *
+   * Second, the FEC records that someone filed and never records that they
+   * lost. Of six Texas Senate filers, two lost their primary and one
+   * withdrew. Only the roster knows that — and the roster is OnTheIssues'
+   * editorial compilation, not a certified return, so it is attached as an
+   * ANNOTATION and never deletes a filing. The reader is told who says so.
+   */
+  const roster = div.state
+    ? await M(TABLES.raceRoster)
+      .findOne({ state: div.state, cycle: 2026 }).lean().catch(() => null)
+    : null;
+  const rosterStatus = new Map();
+  for (const r of roster?.candidates ?? []) {
+    const key = String(r.name || "").toLowerCase().replace(/[^a-z]/g, "");
+    if (key) rosterStatus.set(key, r.status_flags ?? []);
+  }
+  const annotate = (r) => {
+    const key = String(r.name || "").toLowerCase().replace(/[^a-z]/g, "");
+    const flags = rosterStatus.get(key);
+    // Surname fallback: the FEC writes "John Sen Cornyn", the roster "John
+    // Cornyn". Only used when it resolves to exactly one roster entry.
+    let hit = flags;
+    if (!hit) {
+      const sur = String(r.name || "").trim().split(/\s+/).pop()?.toLowerCase();
+      const cands = [...rosterStatus].filter(([k]) => sur && k.endsWith(sur));
+      if (cands.length === 1) hit = cands[0][1];
+    }
+    return hit && hit.length
+      ? { ...r, roster_status: hit, roster_source: roster?.source ?? null }
+      : r;
+  };
+
+  // election_yr is often absent on older rows; absent means "no reason to
+  // exclude", so only an explicit mismatch drops a candidate.
+  const onThisBallot = (r) => r.election_yr == null || r.election_yr === 2026;
+
   return {
     division: div,
     history,
     holders,
-    candidates: candidates.map(flag),
+    candidates: candidates.filter(onThisBallot).map(flag).map(annotate),
     pastCandidates: pastCandidates.map(flag),
+    roster: roster
+      ? { source: roster.source, source_url: roster.source_url,
+          retrieved_at: roster.retrieved_at, caveat: roster.caveat }
+      : null,
   };
 }
 
@@ -248,7 +300,8 @@ async function candidateByFec({ fecId, name, ocdId }) {
   const opponents = await Cand.find(
     { ocd_id: candidate.ocd_id, cycle: candidate.cycle,
       fec_id: { $ne: candidate.fec_id } },
-    { _id: 0, name: 1, party: 1, status: 1, receipts: 1, fec_id: 1, photo: 1 },
+    { _id: 0, name: 1, party: 1, status: 1, receipts: 1, fec_id: 1, photo: 1,
+      social: 1, wikipedia: 1 },
   ).sort({ receipts: -1 }).limit(12).lean();
 
   // How this seat has voted before, for context on the race.
