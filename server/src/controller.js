@@ -436,6 +436,63 @@ exports.getCandidatePlaces = async (req, res) => {
  * vote. The official link is always returned alongside, and the UI leads with
  * it when the lookup is empty.
  */
+/**
+ * GET /api/us-election/issues
+ *
+ * The issue menu, with the coverage behind each entry so the UI can avoid
+ * offering a category that will open on an empty room.
+ */
+exports.getIssues = async (req, res) => {
+  try {
+    const rows = await repo.issueCategories();
+    res.json({ success: true, data: { count: rows.length, rows } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * GET /api/us-election/positions?ocd_id=          — everyone here
+ * GET /api/us-election/positions?category=&state= — one issue, who says what
+ *
+ * Coverage is incumbency-biased by a factor of about five, so every row
+ * carries its own quote counts. A thin record means little is written down,
+ * not that someone has no convictions, and the client is given the numbers
+ * it needs to say that rather than implying the opposite by omission.
+ */
+exports.getPositions = async (req, res) => {
+  try {
+    const limit = clampInt(req.query.limit, 40, 1, 200);
+    const category = req.query.category ? String(req.query.category) : null;
+    const ocdId = req.query.ocd_id ? String(req.query.ocd_id) : null;
+    if (!category && !ocdId) {
+      return res.status(400).json({
+        success: false, message: "category or ocd_id is required",
+      });
+    }
+    const rows = category
+      ? await repo.positionsByIssue({
+        category, ocdId, state: req.query.state, office: req.query.office, limit,
+      })
+      : await repo.positionsForDivision({ ocdId });
+    res.json({
+      success: true,
+      data: {
+        category, ocd_id: ocdId, count: rows.length, rows,
+        source: "OnTheIssues.org",
+        caveat: "Positions are compiled by OnTheIssues.org from public "
+          + "statements, votes and debates. Coverage is far deeper for people "
+          + "who have held office: the median sitting member has 51 recorded "
+          + "positions against a challenger's 11. An empty or thin record "
+          + "means little has been written down, not that a candidate holds "
+          + "no position.",
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 exports.getVoterInfo = async (req, res) => {
   try {
     const state = String(req.query.state || "").toUpperCase();

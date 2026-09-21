@@ -639,6 +639,94 @@ async function pollingPoints({ bbox, limit, year }) {
 
 /** The state election office row. The Civic API lookup stays in the
  *  controller — it is an outbound HTTP call, not data access. */
+/**
+ * The issue taxonomy, with the coverage actually behind each category.
+ *
+ * Coverage is reported rather than assumed because it is deeply uneven and
+ * the UI must not offer an issue that will return an empty room. Six of the
+ * nineteen product categories have no source topic at all — OnTheIssues has
+ * nothing on Veterans Affairs, Agriculture, Infrastructure, Media & Free
+ * Speech or International Development, and "Principles & Values" was
+ * deliberately NOT forced into Constitutional Issues, because religion and
+ * political philosophy are not court appointments.
+ */
+async function issueCategories() {
+  const rows = await M(TABLES.issuePositions).aggregate([
+    { $project: { cats: { $objectToArray: "$categories" }, role: 1 } },
+    { $unwind: "$cats" },
+    { $group: {
+      _id: "$cats.k",
+      people: { $sum: 1 },
+      quotes: { $sum: "$cats.v.quote_count" },
+      challengers: { $sum: { $cond: [{ $eq: ["$role", "challenger"] }, 1, 0] } },
+    } },
+    { $sort: { people: -1 } },
+  ]);
+  return rows.map((r) => ({
+    category: r._id, people: r.people, quotes: r.quotes,
+    challengers: r.challengers,
+  }));
+}
+
+/**
+ * Everyone in one division, with what they have said, by category.
+ *
+ * `total_quotes` travels with every person on purpose. Documentation here is
+ * heavily incumbency-biased — the median officeholder carries 51 recorded
+ * positions against a challenger's 11 — so a thin record must be legible as
+ * "little is written down", never as "this person believes nothing".
+ */
+async function positionsForDivision({ ocdId }) {
+  const rows = await M(TABLES.issuePositions)
+    .find({ ref: ocdId }, { _id: 0, topics: 0 })
+    .sort({ total_quotes: -1 }).limit(60).lean();
+  return rows;
+}
+
+/**
+ * Pick an issue, see who stands where.
+ *
+ * Returns people who have SAID something in this category, with the quotes
+ * themselves and their dates. Sorted by how much is on record, which is a
+ * statement about documentation and not about conviction — the caller is
+ * given the counts so it can say so.
+ */
+async function positionsByIssue({ category, ocdId, state, office, limit }) {
+  const q = { [`categories.${category}`]: { $exists: true } };
+  if (ocdId) q.ref = ocdId;
+  if (state) q.state = String(state).toUpperCase();
+  if (office) q.office = office;
+  const rows = await M(TABLES.issuePositions)
+    .find(q, { _id: 0, name: 1, state: 1, party: 1, office: 1, role: 1,
+      bioguide: 1, fec_id: 1, ref: 1, total_quotes: 1, source_url: 1,
+      match_confidence: 1, categories: 1, topics: 1 })
+    .limit(limit).lean();
+
+  // Flatten to just this category's evidence, keeping the source topics so a
+  // reader can see WHICH OnTheIssues topic a product category was built from.
+  return rows.map((r) => {
+    const cat = r.categories?.[category] ?? {};
+    const srcTopics = cat.topics ?? [];
+    const positions = [];
+    for (const t of srcTopics) {
+      for (const p of (r.topics?.[t]?.positions ?? [])) {
+        positions.push({ ...p, topic: t });
+      }
+    }
+    positions.sort((a, b) => String(b.dated).localeCompare(String(a.dated)));
+    return {
+      name: r.name, state: r.state, party: r.party, office: r.office,
+      role: r.role, bioguide: r.bioguide, fec_id: r.fec_id, ocd_id: r.ref,
+      quote_count: cat.quote_count ?? positions.length,
+      total_quotes: r.total_quotes,
+      source_topics: srcTopics,
+      positions,
+      source_url: r.source_url,
+      match_confidence: r.match_confidence,
+    };
+  }).sort((a, b) => b.quote_count - a.quote_count);
+}
+
 async function voterInfo(state) {
   return M(TABLES.voterInfo).collection.findOne({ _id: state });
 }
@@ -721,6 +809,9 @@ module.exports = {
   newsArticles,
   pollingPoints,
   voterInfo,
+  issueCategories,
+  positionsForDivision,
+  positionsByIssue,
   capabilities,
   stats,
 };

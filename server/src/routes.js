@@ -17,6 +17,8 @@ const {
   getCapabilities,
   getStats,
   getVoterInfo,
+  getIssues,
+  getPositions,
   getPlacePhoto,
   getPollingPoints,
   getPlacePhotoImage,
@@ -37,6 +39,9 @@ router.get("/top-candidates", longCache, getTopCandidates);
 router.get("/years", longCache, getYears);
 router.get("/capabilities", longCache, getCapabilities);
 router.get("/stats", longCache, getStats);
+// Issue positions: the menu, then who stands where on one of them.
+router.get("/issues", longCache, getIssues);
+router.get("/positions", longCache, getPositions);
 router.get("/voter-info", longCache, getVoterInfo);
 router.get("/polling-points", longCache, getPollingPoints);
 router.get("/place-photo", longCache, getPlacePhoto);
