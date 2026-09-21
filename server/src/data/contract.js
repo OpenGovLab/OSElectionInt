@@ -116,6 +116,7 @@ const TABLES = {
   news: "us_election_news",
   voterInfo: "us_voter_info",
   raceRoster: "us_race_roster",
+  polling2026: "us_polling_2026",
   issuePositions: "us_issue_positions",
 };
 

@@ -750,6 +750,39 @@ async function positionsByIssue({ category, ocdId, state, office, limit }) {
   }).sort((a, b) => b.quote_count - a.quote_count);
 }
 
+/**
+ * Where people will actually vote in 2026.
+ *
+ * A DIFFERENT collection from pollingPoints(), and the distinction is the
+ * whole point: that one is 2012-2020, where booths STOOD, and is explicitly
+ * not guidance. This one is current, from the state's own VIP feed.
+ *
+ * Coverage is one sampled address per state, so it proves a feed is live and
+ * is emphatically not a survey. Only Virginia has published so far. A state
+ * with no rows here has NOT published yet — it does not lack polling places,
+ * and the caller is handed `coverage` so it can say so rather than implying
+ * absence.
+ */
+async function pollingPoints2026({ bbox, kinds, limit }) {
+  const q = {};
+  if (Array.isArray(bbox) && bbox.length === 4) {
+    const [w, s, e, n] = bbox;
+    q.geometry = { $geoWithin: { $box: [[w, s], [e, n]] } };
+  }
+  if (kinds?.length) q.kind = { $in: kinds };
+  const rows = await M(TABLES.polling2026).find(q).limit(limit).lean();
+  return rows.map((r) => ({
+    type: "Feature",
+    geometry: r.geometry,
+    properties: {
+      name: r.name, address: r.address, hours: r.hours ?? null,
+      kind: r.kind, state: r.state, notes: r.notes ?? null,
+      start_date: r.start_date ?? null, end_date: r.end_date ?? null,
+      source: r.source ?? null, sampled_from: r.sampled_from ?? null,
+    },
+  }));
+}
+
 async function voterInfo(state) {
   return M(TABLES.voterInfo).collection.findOne({ _id: state });
 }
@@ -831,6 +864,7 @@ module.exports = {
   newsPoints,
   newsArticles,
   pollingPoints,
+  pollingPoints2026,
   voterInfo,
   issueCategories,
   positionsForDivision,

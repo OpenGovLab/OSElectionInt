@@ -18,6 +18,7 @@ const {
   getStats,
   getVoterInfo,
   getIssues,
+  getPolling2026,
   getPositions,
   getPlacePhoto,
   getPollingPoints,
@@ -40,6 +41,8 @@ router.get("/years", longCache, getYears);
 router.get("/capabilities", longCache, getCapabilities);
 router.get("/stats", longCache, getStats);
 // Issue positions: the menu, then who stands where on one of them.
+// Current locations, distinct from the historical 2012-2020 layer.
+router.get("/polling-2026", longCache, getPolling2026);
 router.get("/issues", longCache, getIssues);
 router.get("/positions", longCache, getPositions);
 router.get("/voter-info", longCache, getVoterInfo);

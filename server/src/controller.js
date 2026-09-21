@@ -442,6 +442,40 @@ exports.getCandidatePlaces = async (req, res) => {
  * The issue menu, with the coverage behind each entry so the UI can avoid
  * offering a category that will open on an empty room.
  */
+/**
+ * GET /api/us-election/polling-2026?bbox=&kind=&limit=
+ *
+ * Current locations, as distinct from the historical layer. Every response
+ * carries its coverage caveat because the sampling is one address per state:
+ * an empty answer means a state has not published yet, never that it has no
+ * polling places.
+ */
+exports.getPolling2026 = async (req, res) => {
+  try {
+    const limit = clampInt(req.query.limit, 500, 1, 2000);
+    const bbox = req.query.bbox
+      ? String(req.query.bbox).split(",").map(Number).filter((n) => Number.isFinite(n))
+      : null;
+    const kinds = req.query.kind ? String(req.query.kind).split(",") : null;
+    const features = await repo.pollingPoints2026({ bbox, kinds, limit });
+    res.json({
+      success: true,
+      data: {
+        count: features.length,
+        features,
+        current: true,
+        election: "2026 General Midterm",
+        coverage: "Sampled one address per state from the state's own VIP "
+          + "feed, so this proves a feed is live and is NOT a survey of a "
+          + "state's locations. Most states have not published yet; an empty "
+          + "result means not published, not that there are no polling places.",
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 exports.getIssues = async (req, res) => {
   try {
     const rows = await repo.issueCategories();
