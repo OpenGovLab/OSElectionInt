@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { apiService } from "@/lib/api";
 import PersonLinks, { type Social } from "./PersonLinks";
+import PersonPositions from "./PersonPositions";
 import Portrait from "./Portrait";
 
 /**
@@ -169,6 +170,16 @@ export default function CandidateDetail({
             </p>
           )}
         </section>
+
+        {/* Stated positions, as distinct from the voting record above: a
+            challenger has no roll-calls but may still have said a great
+            deal, and the two must not be conflated. */}
+        <PersonPositions
+          name={c.name}
+          state={c.state}
+          fecId={c.fec_id ?? null}
+          bioguide={c.bioguide ?? null}
+        />
 
         {rec?.committees?.length ? (
           <section>

@@ -4,6 +4,7 @@ import { marginLabel, moneyLabel } from "@/config/usElectionMap";
 import { apiService } from "@/lib/api";
 
 import PersonLinks, { type Social } from "./PersonLinks";
+import PersonPositions from "@/components/us-election/PersonPositions";
 import Portrait from "./Portrait";
 import VoterInfo from "./VoterInfo";
 
@@ -52,6 +53,13 @@ export interface Candidate {
   pac_contrib: number;
   ballot_status: string;
   coverage_end: string | null;
+  /**
+   * What a curated roster says became of them — "lost primary", "withdrew",
+   * "incumbent". The FEC records that somebody filed and never records that
+   * they lost, so without this the panel lists people who are out of the
+   * race beside people who are still in it.
+   */
+  roster_status?: string[] | null;
   fec_id?: string;
   photo?: string | null;
   bioguide?: string;
@@ -512,6 +520,17 @@ function MatchupCard({
  * which is not the same as a certified place on the ballot.
  */
 
+/**
+ * Knocked out, per the roster. Kept visible rather than dropped: a reader who
+ * remembers a name from the news should find it and learn what happened,
+ * and the money they raised is still part of the story of the race.
+ */
+const OUT_FLAGS = ["lost primary", "withdrew", "lost", "withdrawn"];
+const outOfRace = (c: Candidate) =>
+  (c.roster_status ?? []).some((f) => OUT_FLAGS.includes(String(f).toLowerCase()));
+const outLabel = (c: Candidate) =>
+  (c.roster_status ?? []).find((f) => OUT_FLAGS.includes(String(f).toLowerCase())) ?? null;
+
 const isSeatHolder = (c: Candidate) => c.sitting === true || c.status === "incumbent";
 
 const statusTag = (c: Candidate) =>
@@ -577,8 +596,12 @@ function buildFields(cands: Candidate[], holders: Holder[]): OfficeField[] {
       const pool = live.filter((c) => c.office === office);
       const seated = pool.filter(isSeatHolder)
         .sort((a, b) => b.receipts - a.receipts);
+      // Still in the race first, then by money. Sorting a withdrawn
+      // candidate above a live one on receipts alone would put the loudest
+      // name at the top of a contest they are no longer part of.
       const challengers = pool.filter((c) => !isSeatHolder(c))
-        .sort((a, b) => b.receipts - a.receipts);
+        .sort((a, b) => (Number(outOfRace(a)) - Number(outOfRace(b)))
+          || (b.receipts - a.receipts));
       return {
         office,
         cycle: cycle ?? 0,
@@ -588,7 +611,10 @@ function buildFields(cands: Candidate[], holders: Holder[]): OfficeField[] {
           (h) => h.office === office && !filedAlready(h, pool)),
         max: Math.max(...pool.map((c) => c.receipts), 1),
         filed: pool.length,
-        challengerMoney: challengers.reduce((t, c) => t + c.receipts, 0),
+        // Money still in the race. Counting a withdrawn candidate's haul
+        // would overstate what the seat is actually being contested with.
+        challengerMoney: challengers.filter((c) => !outOfRace(c))
+          .reduce((t, c) => t + c.receipts, 0),
         seatedMoney: seated.reduce((t, c) => t + c.receipts, 0),
       };
     })
@@ -629,11 +655,16 @@ function ChallengerRow({ c, max, onOpen }: {
       opensecrets={c.opensecrets}
     />
   );
+  const out = outOfRace(c);
+  const gone = outLabel(c);
   return (
     /* The card is a button and the handles are links. An anchor nested in a
        button is invalid HTML and one of the two clicks gets eaten, so the
        link bar is a sibling laid over the same card. */
-    <div className="mb-1.5 rounded-lg border border-black/5 hover:bg-slate-50 dark:border-white/5 dark:hover:bg-slate-800">
+    <div className={`mb-1.5 rounded-lg border hover:bg-slate-50 dark:hover:bg-slate-800 ${
+      out
+        ? "border-dashed border-black/10 opacity-60 dark:border-white/10"
+        : "border-black/5 dark:border-white/5"}`}>
     <button
       onClick={onOpen}
       disabled={!onOpen}
@@ -643,7 +674,8 @@ function ChallengerRow({ c, max, onOpen }: {
         <Portrait src={c.photo} name={c.name} party={c.party} size={40} />
         <span className="min-w-0 flex-1">
           <span className="flex items-baseline justify-between gap-2">
-            <span className="min-w-0 truncate text-xs font-semibold text-slate-900 dark:text-white">
+            <span className={`min-w-0 truncate text-xs font-semibold text-slate-900 dark:text-white ${
+              out ? "line-through decoration-slate-400" : ""}`}>
               {c.name}
             </span>
             <span className={`shrink-0 font-mono text-[10px] font-bold ${partyText(c.party)}`}>
@@ -651,8 +683,15 @@ function ChallengerRow({ c, max, onOpen }: {
             </span>
           </span>
           <span className="mt-0.5 flex items-baseline justify-between gap-2">
-            <span className="shrink-0 rounded-[2px] border border-cyan-500/30 bg-cyan-500/10 px-1 py-px font-mono text-[8px] font-bold uppercase tracking-wider text-cyan-700 dark:text-cyan-300">
-              {statusTag(c)}
+            <span
+              title={out
+                ? `Reported as having ${gone} — per a curated roster, not a certified filing`
+                : undefined}
+              className={`shrink-0 rounded-[2px] border px-1 py-px font-mono text-[8px] font-bold uppercase tracking-wider ${
+                out
+                  ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                  : "border-cyan-500/30 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300"}`}>
+              {out ? gone : statusTag(c)}
             </span>
             <span className="shrink-0 text-[10px] font-medium tabular-nums text-slate-600 dark:text-slate-300">
               {c.receipts > 0 ? moneyLabel(c.receipts) : "nothing reported"}
@@ -887,11 +926,12 @@ function OfficeRace({
 }
 
 function WhosRunning({
-  fields, holders, coverageEnd, onSelectPerson, onSelectCandidate,
+  fields, holders, coverageEnd, roster, onSelectPerson, onSelectCandidate,
 }: {
   fields: OfficeField[];
   holders: Holder[];
   coverageEnd: string | null;
+  roster?: { source?: string; source_url?: string } | null;
   onSelectPerson?: (h: Holder) => void;
   onSelectCandidate?: (c: { fecId?: string; name: string }) => void;
 }) {
@@ -918,6 +958,21 @@ function WhosRunning({
           registration, not a certified place on the ballot.
         </p>
       )}
+      {/* The FEC never records that somebody lost, so anyone struck through
+          above is marked from a separate, editorial source. Say whose. */}
+      {anyFiled && fields.some((f) => f.challengers.some(outOfRace)) && (
+        <p className="mt-1 text-[9px] leading-relaxed text-amber-700/80 dark:text-amber-500/80">
+          Struck-through names are reported as no longer running by{" "}
+          {roster?.source_url ? (
+            <a href={roster.source_url} target="_blank" rel="noopener noreferrer"
+               className="underline">
+              {roster.source ?? "a curated roster"}
+            </a>
+          ) : (roster?.source ?? "a curated roster")}
+          . That is an editorial compilation, not a certified filing — their
+          FEC record is kept and shown.
+        </p>
+      )}
     </section>
   );
 }
@@ -936,6 +991,9 @@ export default function DivisionDetail({
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [cands, setCands] = useState<Candidate[]>([]);
   const [past, setPast] = useState<PastCandidate[]>([]);
+  const [roster, setRoster] = useState<
+    { source?: string; source_url?: string; caveat?: string } | null>(null);
+  const [stateCode, setStateCode] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
@@ -953,6 +1011,8 @@ export default function DivisionDetail({
         setHistory(d.history || []);
         setCands(d.candidates || []);
         setPast(d.pastCandidates || []);
+        setRoster(d.roster ?? null);
+        setStateCode(d.division?.state ?? null);
       })
       .catch(() => { if (alive) setErr("could not load"); })
       .finally(() => { if (alive) setLoading(false); });
@@ -1002,6 +1062,7 @@ export default function DivisionDetail({
           <>
             <WhosRunning
               fields={fields}
+              roster={roster}
               holders={holders}
               coverageEnd={coverageEnd}
               onSelectPerson={onSelectPerson}
@@ -1017,6 +1078,38 @@ export default function DivisionDetail({
                 onSelectCandidate={onSelectCandidate}
               />
             )}
+
+            {/* Where the leading people in this race stand, each collapsed
+                until asked for — opening one warms a per-state index, so
+                mounting them expanded would fire that for anyone who merely
+                clicked a district. */}
+            {(() => {
+              const lead = fields.flatMap((f) => [
+                ...f.challengers.filter((c) => !outOfRace(c)).slice(0, 2),
+                ...f.seated.slice(0, 1),
+              ]);
+              if (!lead.length) return null;
+              return (
+                <section className="mb-4">
+                  <h3 className="mb-2 font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-slate-700 dark:text-slate-200">
+                    Where they stand
+                  </h3>
+                  {lead.map((c) => (
+                    <div key={c.fec_id || c.name} className="mb-1">
+                      <p className="mb-0.5 truncate text-[11px] font-semibold text-slate-800 dark:text-slate-100">
+                        {c.name}
+                      </p>
+                      <PersonPositions
+                        name={c.name}
+                        state={stateCode}
+                        fecId={c.fec_id ?? null}
+                        bioguide={c.bioguide ?? null}
+                      />
+                    </div>
+                  ))}
+                </section>
+              );
+            })()}
 
             <VoterInfo ocdId={ocdId} />
 

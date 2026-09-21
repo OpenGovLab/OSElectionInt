@@ -44,6 +44,7 @@ import ElectionChat from "@/components/us-election/ElectionChat";
 import NewsRail, { type NewsArticle }
   from "@/components/us-election/NewsRail";
 import PersonDetail from "@/components/us-election/PersonDetail";
+import IssueExplorer from "@/components/us-election/IssueExplorer";
 import Portrait from "@/components/us-election/Portrait";
 import {
   availableOverlays,
@@ -305,6 +306,8 @@ export default function USElectionPage({
   const [detail, setDetail] = useState<Row | null>(null);
   const [person, setPerson] = useState<DetailHolder | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
+  // The issue explorer takes over the panel, like chat does.
+  const [issuesOpen, setIssuesOpen] = useState(false);
   // Overlay visibility, keyed by the registry rather than one boolean per
   // layer. Adding the news layer is a registry entry plus a data effect.
   const [overlays, setOverlays] = useState<Record<OverlayId, boolean>>(
@@ -2156,6 +2159,24 @@ export default function USElectionPage({
 
           <div className="mx-2 border-t border-white/5" />
 
+          {/* Issues. Its own group: it is not a map layer, it is a different
+              question about the same people. */}
+          <div className="flex flex-col items-center gap-0.5 p-1">
+            <button
+              onClick={() => { setIssuesOpen(true); setSheetOpen(true); }}
+              title="Issues — pick an issue and see who stands where"
+              className={tbtn(issuesOpen)}
+            >
+              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none"
+                   stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+                   strokeLinejoin="round">
+                <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+              </svg>
+            </button>
+          </div>
+
+          <div className="mx-2 border-t border-white/5" />
+
           {/* level selector */}
           <div className="flex flex-col items-center gap-0.5 p-1" role="group" aria-label="Detail level">
             <button
@@ -2572,7 +2593,7 @@ export default function USElectionPage({
       <div className={`absolute z-20 flex flex-col overflow-hidden border-black/10 bg-white/95 shadow-2xl backdrop-blur dark:border-white/10 dark:bg-slate-900/95
         inset-x-0 bottom-0 rounded-t-2xl border-t transition-[max-height] duration-300
         md:bottom-8 md:top-11 md:right-3 md:left-auto md:w-[22rem] md:rounded-xl md:border
-        ${chatOpen ? "max-h-[88%] md:max-h-none"
+        ${chatOpen || issuesOpen ? "max-h-[88%] md:max-h-none"
           : sheetOpen ? "max-h-[55%] md:max-h-none"
             : "max-h-14 md:max-h-none"}`}>
         {cand ? (
@@ -2629,6 +2650,12 @@ export default function USElectionPage({
               ))}
             </div>
           </div>
+        ) : issuesOpen ? (
+          <IssueExplorer
+            state={detail?.state ?? selected?.state ?? null}
+            stateName={detail?.state ?? selected?.state ?? null}
+            onBack={() => setIssuesOpen(false)}
+          />
         ) : chatOpen ? (
           <ElectionChat
             ocdId={detail?.ocd_id}
