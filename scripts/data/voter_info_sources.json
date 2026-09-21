@@ -1,0 +1,63 @@
+{
+  "_comment": [
+    "Where each voter-requirement field comes from, and what could not be",
+    "obtained. This lives in its own file because provenance is the whole",
+    "point of the dataset: a reader turned away from a polling place needs to",
+    "know which source told us what, and when it was checked.",
+    "",
+    "NCSL (ncsl.org) is the canonical source for the voter-ID STRICTNESS",
+    "taxonomy (strict-photo / photo-requested / non-photo / no-ID) and for the",
+    "same-day-registration and early-voting comparison tables. It returns 403",
+    "to automated clients on every one of those four tables, verified",
+    "2026-09-21. That classification is therefore ABSENT from this dataset",
+    "rather than reconstructed: deriving 'strict photo ID' from a paragraph of",
+    "prose is exactly the flattening that sends someone to the polls with the",
+    "wrong document.",
+    "",
+    "Google Civic voterinfo (electionId 12000, the live 2026 General Midterm)",
+    "returns a state block containing only a name and a VIP source stub - no",
+    "electionAdministrationBody, no URLs. Verified for TX; MA and WI fail",
+    "address parsing outright. It contributes nothing here yet."
+  ],
+  "checked": "2026-09-21",
+  "sources": {
+    "vote.org/voter-id-laws": {
+      "url": "https://www.vote.org/voter-id-laws/",
+      "shape": "52-row table: State | In-Person Voter ID Laws | Absentee Voter ID Laws",
+      "feeds": ["voter_id.in_person", "voter_id.absentee"]
+    },
+    "vote.org/voter-registration-deadlines": {
+      "url": "https://www.vote.org/voter-registration-deadlines/",
+      "shape": "52-row table: State | Voter Registration Deadlines | Election Day Registration",
+      "feeds": ["registration.deadlines", "registration.election_day_registration", "registration.same_day"]
+    },
+    "vote.org/early-voting-calendar": {
+      "url": "https://www.vote.org/early-voting-calendar/",
+      "shape": "52-row table: State | begins | ends | More Information",
+      "feeds": ["early_voting.begins", "early_voting.ends", "early_voting.offered"]
+    },
+    "vote.org/absentee-ballot-deadlines": {
+      "url": "https://www.vote.org/absentee-ballot-deadlines/",
+      "shape": "52-row table: State | Application Deadline | Ballot Due | Ballot Tracker",
+      "feeds": ["mail_voting.application_deadline", "mail_voting.ballot_due", "official_links.ballot_tracker"]
+    },
+    "vote.org/absentee-voting-rules": {
+      "url": "https://www.vote.org/absentee-voting-rules/",
+      "shape": "prose sections delimited by '<State> absentee ballot rules' headings",
+      "feeds": ["mail_voting.rules"]
+    },
+    "usa.gov/state-election-office": {
+      "url": "https://www.usa.gov/state-election-office",
+      "shape": "already ingested; supplies election_office_url",
+      "feeds": ["official_links.election_office"]
+    }
+  },
+  "unavailable": {
+    "ncsl_voter_id_strictness": "403 to automated clients; classification omitted rather than inferred",
+    "ncsl_same_day_registration_table": "403",
+    "ncsl_early_voting_table": "403",
+    "ncsl_no_excuse_absentee_table": "403",
+    "polling_hours": "no free per-state structured source found; state election office governs",
+    "google_civic_admin_body": "state block carries name + VIP stub only, no URLs"
+  }
+}
