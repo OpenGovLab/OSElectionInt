@@ -43,6 +43,19 @@ export interface IssueCategory {
   people: number;
   quotes: number;
   challengers: number;
+  /** Poles of this issue's policy axis, in the server's own wording. */
+  axis?: { neg: string; pos: string };
+  icon?: string;
+  with_stance?: number;
+  quotes_classified?: number;
+  conflicted?: number;
+  challengers_with_stance?: number;
+  /**
+   * Whether stance can be answered for this category at all. Honoured rather
+   * than assumed: the corpus predates the current technology debate, so an AI
+   * or data-centre filter would return an empty room that reads as a finding.
+   */
+  filterable?: boolean;
 }
 
 /** What a person has said, grouped by the product category it belongs to. */

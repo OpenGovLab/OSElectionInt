@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 
+import IssueIcon from "@/components/us-election/IssueIcon";
+import StanceView from "@/components/us-election/StanceView";
 import {
   fetchCategories, fetchCategory, ROLE_LABEL, ROLE_ORDER,
   type IssueCategory, type PositionRow,
 } from "@/lib/positions";
+import type { StanceAxis, StancePerson } from "@/lib/stance";
 
 /**
  * Pick an issue, see who stands where.
@@ -125,12 +128,17 @@ function PersonBlock({ r }: { r: PositionRow }) {
 }
 
 export default function IssueExplorer({
-  state, stateName, onBack,
+  state, stateName, onBack, onStanceRows,
 }: {
   /** Postal code the map is currently looking at, or null for nationwide. */
   state?: string | null;
   stateName?: string | null;
   onBack: () => void;
+  /**
+   * Rows currently on screen in stance mode, handed up so the map can paint
+   * exactly what the list shows. Called with an empty array to clear.
+   */
+  onStanceRows?: (rows: StancePerson[], axis: StanceAxis | null) => void;
 }) {
   const [cats, setCats] = useState<IssueCategory[]>([]);
   const [category, setCategory] = useState<string | null>(null);
@@ -139,12 +147,23 @@ export default function IssueExplorer({
   const [loading, setLoading] = useState(false);
   // Scoped to what the map is showing by default; a reader can widen it.
   const [scoped, setScoped] = useState(Boolean(state));
+  // "said" lists the quotes; "stance" places people on the issue's axis.
+  const [mode, setMode] = useState<"said" | "stance">("stance");
+
+  const meta = useMemo(
+    () => cats.find((c) => c.category === category) ?? null, [cats, category]);
 
   useEffect(() => { fetchCategories().then(setCats).catch(() => setCats([])); }, []);
   useEffect(() => { setScoped(Boolean(state)); }, [state]);
 
+  // Leaving the panel, or the category, must not leave stale pins behind.
   useEffect(() => {
-    if (!category) { setRows([]); return; }
+    if (!category || mode !== "stance") onStanceRows?.([], null);
+  }, [category, mode, onStanceRows]);
+  useEffect(() => () => { onStanceRows?.([], null); }, [onStanceRows]);
+
+  useEffect(() => {
+    if (!category || mode !== "said") { setRows([]); return; }
     let alive = true;
     setLoading(true);
     fetchCategory(category, scoped && state ? { state } : {})
@@ -152,7 +171,7 @@ export default function IssueExplorer({
       .catch(() => { if (alive) setRows([]); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [category, scoped, state]);
+  }, [category, scoped, state, mode]);
 
   // Challengers first — see the note at the top of this file.
   const grouped = useMemo(() => {
@@ -184,10 +203,34 @@ export default function IssueExplorer({
         >
           ←
         </button>
+        {category && <IssueIcon name={meta?.icon} className="h-3.5 w-3.5 shrink-0 text-cyan-600 dark:text-cyan-300" />}
         <span className="min-w-0 flex-1 truncate font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-cyan-700 dark:text-cyan-300">
           {category ?? "Issues"}
         </span>
-        {state && (
+        {category && (
+          /* Two questions about the same people: where they sit on the axis,
+             and what they actually said. The quotes are the evidence for the
+             position, so both must stay one click apart. */
+          <div className="flex shrink-0 overflow-hidden rounded-[3px] border border-black/10 dark:border-white/10">
+            {(["stance", "said"] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                title={m === "stance"
+                  ? "Place everyone on this issue's axis, on the map"
+                  : "Read what people said, quoted and dated"}
+                className={`px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider transition-colors ${
+                  mode === m
+                    ? "bg-cyan-400/15 text-cyan-700 dark:text-cyan-300"
+                    : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+                }`}
+              >
+                {m === "stance" ? "Stance" : "Said"}
+              </button>
+            ))}
+          </div>
+        )}
+        {state && mode === "said" && (
           <button
             onClick={() => setScoped((s) => !s)}
             title={scoped ? "Showing this state only" : "Showing everyone on record"}
@@ -216,9 +259,12 @@ export default function IssueExplorer({
             <button
               key={c.category}
               onClick={() => setCategory(c.category)}
-              className="mb-1 flex w-full items-center justify-between gap-2 rounded-lg border border-black/5 px-2.5 py-2 text-left hover:bg-slate-50 dark:border-white/5 dark:hover:bg-slate-800"
+              className="mb-1 flex w-full items-center gap-2 rounded-lg border border-black/5 px-2.5 py-2 text-left hover:bg-slate-50 dark:border-white/5 dark:hover:bg-slate-800"
             >
-              <span className="min-w-0 truncate text-xs font-medium text-slate-800 dark:text-slate-100">
+              <span className="shrink-0 text-slate-400 dark:text-slate-500">
+                <IssueIcon name={c.icon} className="h-4 w-4" />
+              </span>
+              <span className="min-w-0 flex-1 truncate text-xs font-medium text-slate-800 dark:text-slate-100">
                 {c.category}
               </span>
               <span className="shrink-0 text-right">
@@ -239,6 +285,21 @@ export default function IssueExplorer({
             no source coverage and are not listed rather than shown empty.
           </p>
         </div>
+      ) : mode === "stance" ? (
+        meta && meta.filterable === false ? (
+          <p className="px-3 py-6 text-center text-xs leading-relaxed text-slate-500">
+            Nobody has a classified position on this issue, so there is nothing
+            to place on the axis. The quotes are still under “Said”.
+          </p>
+        ) : (
+          <StanceView
+            category={category}
+            icon={meta?.icon}
+            state={state}
+            stateName={stateName}
+            onRows={onStanceRows ?? (() => {})}
+          />
+        )
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto px-2.5 py-2">
           {loading && (

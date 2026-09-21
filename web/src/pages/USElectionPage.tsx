@@ -51,6 +51,20 @@ import NewsRail, { type NewsArticle }
   from "@/components/us-election/NewsRail";
 import PersonDetail from "@/components/us-election/PersonDetail";
 import IssueExplorer from "@/components/us-election/IssueExplorer";
+import {
+  STANCE_SOURCE,
+  STANCE_MIN_ZOOM,
+  STANCE_STOPS,
+  stanceColor,
+  stanceRadius,
+  stanceStrokeColor,
+  stanceStrokeWidth,
+  stanceFeatures,
+  stanceHex,
+  stanceWording,
+} from "@/config/usElectionStance";
+import type { StanceAxis, StancePerson } from "@/lib/stance";
+import { OFFICE_LABEL as STANCE_OFFICE, ROLE_SHORT } from "@/lib/stance";
 import Portrait from "@/components/us-election/Portrait";
 import {
   availableOverlays,
@@ -412,6 +426,23 @@ export default function USElectionPage({
   // Coverage comes FROM the API response rather than being restated here, so
   // a caveat cannot drift out of step with the data it describes.
   const [vote26, setVote26] = useState<{ count: number; coverage: string } | null>(null);
+  /**
+   * Stance pins come from the issues panel rather than being fetched here, so
+   * the map paints exactly the rows the reader is looking at. Fetching them
+   * separately would let the two disagree the moment a filter is applied.
+   */
+  const [stanceRows, setStanceRows] = useState<StancePerson[]>([]);
+  const [stanceAxis, setStanceAxis] = useState<StanceAxis | null>(null);
+  const [stanceTip, setStanceTip] = useState<{
+    x: number; y: number; row: StancePerson;
+  } | null>(null);
+  // Stable identity: the panel clears its rows in an effect keyed on this
+  // callback, so a new function every render would clear the map forever.
+  const onStanceRows = useCallback(
+    (rows: StancePerson[], axis: StanceAxis | null) => {
+      setStanceRows(rows);
+      setStanceAxis(axis);
+    }, []);
   const [homeTip, setHomeTip] = useState<{
     x: number; y: number; place: string; candidates: number;
     dem: number; rep: number; other: number;
@@ -658,11 +689,12 @@ export default function USElectionPage({
                         "news-glow", "news-dot",
                         "polls-glow", "polls-dot",
                         "vote26-glow", "vote26-dot",
+                        "stance-glow", "stance-dot",
                         "home-glow", "home-dot"]) {
         if (map.getLayer(id)) map.removeLayer(id);
       }
       for (const src of [SOURCE_ID, LABEL_SOURCE, RACE_SOURCE, NEWS_SOURCE, POLLS_SOURCE,
-                         VOTE26_SOURCE, HOME_SOURCE]) {
+                         VOTE26_SOURCE, STANCE_SOURCE, HOME_SOURCE]) {
         if (map.getSource(src)) map.removeSource(src);
       }
       // promoteId lets feature state be keyed by division id, which is stable
@@ -764,6 +796,10 @@ export default function USElectionPage({
         data: { type: "FeatureCollection", features: [] },
       });
       map.addSource(HOME_SOURCE, {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+      map.addSource(STANCE_SOURCE, {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },
       });
@@ -926,6 +962,35 @@ export default function USElectionPage({
           "circle-opacity": 0.95,
           "circle-stroke-width": 1,
           "circle-stroke-color": ink ? "#0f172a" : HOME_COLOR.stroke,
+        },
+      });
+
+      // Where people stand on the selected issue. Drawn above every other
+      // point layer: when a reader has picked an issue this is the thing
+      // they asked to see, and it must not sit under a booth or a news ring.
+      map.addLayer({
+        id: "stance-glow", type: "circle", source: STANCE_SOURCE,
+        minzoom: STANCE_MIN_ZOOM,
+        layout: { visibility: "none" },
+        paint: {
+          "circle-color": stanceColor() as never,
+          "circle-radius": stanceRadius(2.2) as never,
+          "circle-blur": 1,
+          "circle-opacity": 0.3,
+        },
+      });
+      map.addLayer({
+        id: "stance-dot", type: "circle", source: STANCE_SOURCE,
+        minzoom: STANCE_MIN_ZOOM,
+        layout: { visibility: "none" },
+        paint: {
+          "circle-color": stanceColor() as never,
+          "circle-radius": stanceRadius() as never,
+          "circle-opacity": 0.92,
+          // Amber ring marks a contradictory record — see stanceStrokeColor.
+          "circle-stroke-width": stanceStrokeWidth() as never,
+          "circle-stroke-color": stanceStrokeColor() as never,
+          "circle-stroke-opacity": 0.95,
         },
       });
     }
@@ -1217,6 +1282,55 @@ export default function USElectionPage({
       map.off("idle", schedule);
     };
   }, [overlays.vote2026, ready, styleEpoch]);
+
+  /**
+   * Paint whatever the issues panel is currently showing.
+   *
+   * No fetch here on purpose — the rows arrive from the panel so the list and
+   * the map can never disagree. Visibility is driven by whether there is
+   * anything to draw rather than by an overlay toggle, because this layer is
+   * a mode a reader entered deliberately, not a background layer they might
+   * have left on and forgotten.
+   */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || !map.isStyleLoaded()) return;
+    const src = map.getSource(STANCE_SOURCE) as maplibregl.GeoJSONSource | undefined;
+    if (!src) return;
+    src.setData(stanceFeatures(stanceRows as never) as never);
+    const v = stanceRows.length ? "visible" : "none";
+    for (const id of ["stance-glow", "stance-dot"]) {
+      if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", v);
+    }
+    if (!stanceRows.length) setStanceTip(null);
+  }, [stanceRows, ready, styleEpoch]);
+
+  // ── stance hover ─────────────────────────────────────────────────────
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    const enter = (e: maplibregl.MapLayerMouseEvent) => {
+      const f = e.features?.[0];
+      if (!f) return;
+      map.getCanvas().style.cursor = "pointer";
+      // Feature properties survive the trip as flat strings, so the typed
+      // row is looked up rather than reconstructed from them.
+      const p = (f.properties ?? {}) as Record<string, string>;
+      const row = stanceRows.find(
+        (r) => (r.bioguide && r.bioguide === p.bioguide)
+          || (r.fec_id && r.fec_id === p.fec_id)
+          || r.name === p.name,
+      );
+      if (row) setStanceTip({ x: e.point.x, y: e.point.y, row });
+    };
+    const leave = () => { map.getCanvas().style.cursor = ""; setStanceTip(null); };
+    map.on("mousemove", "stance-dot", enter);
+    map.on("mouseleave", "stance-dot", leave);
+    return () => {
+      map.off("mousemove", "stance-dot", enter);
+      map.off("mouseleave", "stance-dot", leave);
+    };
+  }, [ready, stanceRows]);
 
   // ── 2026 location hover ──────────────────────────────────────────────
   useEffect(() => {
@@ -2526,6 +2640,67 @@ export default function USElectionPage({
       {/* 2026 voting location readout. No aerial image: these are live
           civic instructions and a stale satellite tile adds nothing to
           "where do I vote" while costing a request. */}
+      {/* Stance readout. Carries the evidence count and the date range beside
+          the number, because a median over two quotes from 2007 and a median
+          over eighteen up to 2021 are not the same claim. */}
+      {stanceTip && (
+        <div
+          className="pointer-events-none absolute z-30 hidden w-[19rem] rounded-lg border border-white/10 bg-slate-950/95 px-3 py-2 shadow-xl backdrop-blur md:block"
+          style={{
+            left: Math.min(stanceTip.x + 14, (containerRef.current?.clientWidth ?? 0) - 320),
+            top: Math.max(8, stanceTip.y - 10),
+          }}
+        >
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="min-w-0 truncate text-xs font-semibold text-white">
+              {stanceTip.row.name}
+            </span>
+            <span className={`shrink-0 font-mono text-[10px] font-bold ${
+              stanceTip.row.party === "DEM" ? "text-blue-400"
+                : stanceTip.row.party === "REP" ? "text-red-400" : "text-slate-400"}`}>
+              {stanceTip.row.party}
+            </span>
+          </div>
+          <div className="mt-0.5 font-mono text-[9px] uppercase tracking-wider text-slate-500">
+            {ROLE_SHORT[stanceTip.row.role] ?? stanceTip.row.role}
+            {" · "}{STANCE_OFFICE[stanceTip.row.office] ?? stanceTip.row.office}
+            {stanceTip.row.state ? ` · ${stanceTip.row.state}` : ""}
+          </div>
+
+          <div className="mt-1.5 flex items-center gap-2">
+            <span className="h-3 w-3 shrink-0 rounded-full"
+                  style={{ background: stanceHex(stanceTip.row.median) }} />
+            <span className="font-mono text-xs font-bold tabular-nums"
+                  style={{ color: stanceHex(stanceTip.row.median) }}>
+              {stanceTip.row.median > 0 ? "+" : ""}{stanceTip.row.median.toFixed(2)}
+            </span>
+            <span className="min-w-0 text-[10px] leading-tight text-slate-300">
+              {stanceWording(stanceTip.row.median, stanceAxis)}
+            </span>
+          </div>
+
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 font-mono text-[9px] text-slate-500">
+            <span className="text-cyan-300">
+              {stanceTip.row.n_classified} quote{stanceTip.row.n_classified === 1 ? "" : "s"}
+            </span>
+            {stanceTip.row.earliest && (
+              <span>
+                {stanceTip.row.earliest}
+                {stanceTip.row.latest && stanceTip.row.latest !== stanceTip.row.earliest
+                  ? ` – ${stanceTip.row.latest}` : ""}
+              </span>
+            )}
+          </div>
+
+          {stanceTip.row.conflicted && (
+            <p className="mt-1 border-t border-amber-500/20 pt-1 text-[10px] leading-snug text-amber-300">
+              Mixed record — their quotes disagree with each other. This number
+              is an average, not a position they have stated.
+            </p>
+          )}
+        </div>
+      )}
+
       {vote26Tip && (
         <div
           className="pointer-events-none absolute z-30 hidden w-[18rem] overflow-hidden rounded-lg border border-violet-500/50 bg-white/95 shadow-lg backdrop-blur md:block dark:bg-slate-900/95"
@@ -2783,7 +2958,7 @@ export default function USElectionPage({
       )}
 
       {/* legend */}
-      <div className="pointer-events-none absolute bottom-9 left-3 z-20 rounded-lg border border-black/10 bg-white/90 px-3 py-2 text-[10px] shadow-lg backdrop-blur dark:border-white/10 dark:bg-slate-900/90">
+      <div className="pointer-events-none absolute bottom-9 left-3 z-20 max-w-[19rem] rounded-lg border border-black/10 bg-white/90 px-3 py-2 text-[10px] shadow-lg backdrop-blur dark:border-white/10 dark:bg-slate-900/90">
         <div className="mb-1 font-semibold text-slate-700 dark:text-slate-200">Margin</div>
         <div className="flex items-center gap-1">
           <span className="text-blue-700 dark:text-blue-400">D+40</span>
@@ -2792,6 +2967,38 @@ export default function USElectionPage({
           }} />
           <span className="text-red-700 dark:text-red-400">R+40</span>
         </div>
+
+        {/* Stance sits UNDER the margin key, never replacing it: the pins and
+            the choropleth are on screen together and a reader has to be able
+            to tell which ramp is which. The poles are the server's own
+            wording — never "left" and "right", because the two ramps do not
+            mean the same thing and one of them is not about party at all. */}
+        {stanceRows.length > 0 && stanceAxis && (
+          <div className="mt-2 border-t border-black/10 pt-1.5 dark:border-white/10">
+            <div className="mb-1 flex items-baseline justify-between gap-2">
+              <span className="font-semibold text-slate-700 dark:text-slate-200">
+                Where people stand
+              </span>
+              <span className="font-mono text-[9px] tabular-nums text-slate-400">
+                {stanceRows.length}
+              </span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="h-2.5 w-full rounded-sm" style={{
+                background: `linear-gradient(to right, ${STANCE_STOPS.map(([, c]) => c).join(",")})`,
+              }} />
+            </div>
+            <div className="mt-0.5 flex items-start justify-between gap-2 text-[9px] leading-tight text-slate-500 dark:text-slate-400">
+              <span className="max-w-[45%]">{stanceAxis.neg}</span>
+              <span className="max-w-[45%] text-right">{stanceAxis.pos}</span>
+            </div>
+            <div className="mt-1 flex items-center gap-1.5 text-[9px] text-slate-500 dark:text-slate-400">
+              <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-amber-400 bg-slate-400" />
+              <span>ringed = mixed record</span>
+              <span className="ml-auto">bigger = more quotes</span>
+            </div>
+          </div>
+        )}
       </div>
 
       {outOfBand && ready && (
@@ -2866,6 +3073,7 @@ export default function USElectionPage({
             state={detail?.state ?? selected?.state ?? null}
             stateName={detail?.state ?? selected?.state ?? null}
             onBack={() => setIssuesOpen(false)}
+            onStanceRows={onStanceRows}
           />
         ) : chatOpen ? (
           <ElectionChat
