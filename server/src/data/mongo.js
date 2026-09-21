@@ -751,6 +751,193 @@ async function positionsByIssue({ category, ocdId, state, office, limit }) {
 }
 
 /**
+ * Stance rows for a map layer — one point per person.
+ *
+ * `centroid` is the division's centre, not the person's: everyone in a
+ * district shares a point. That is honest for what this shows (a seat's
+ * representative takes a position) but means co-located people must be
+ * spread or clustered by the client rather than drawn on top of each other.
+ *
+ * Anyone without a centroid is DROPPED, never emitted at 0,0 — a person
+ * silently placed in the Gulf of Guinea is worse than a person missing.
+ */
+async function stanceMap({ category, office, role, minN }) {
+  const K = `category_stance.${category}`;
+  const q = {
+    [`${K}.n_classified`]: { $gte: minN },
+    centroid: { $exists: true, $ne: null },
+  };
+  if (office) q.office = office;
+  if (role) q.role = role;
+  const rows = await M(TABLES.issuePositions)
+    .find(q, { _id: 0, name: 1, party: 1, role: 1, ocd_id: 1, state: 1,
+      office: 1, centroid: 1, bioguide: 1, fec_id: 1, total_quotes: 1,
+      division_name: 1, division_level: 1, source_url: 1,
+      [K]: 1 })
+    .lean();
+  return rows.map((r) => {
+    const st = r.category_stance?.[category] ?? {};
+    const [lng, lat] = r.centroid?.coordinates ?? [];
+    return {
+      name: r.name, party: r.party, role: r.role, ocd_id: r.ocd_id,
+      state: r.state, office: r.office, lng, lat,
+      division_name: r.division_name ?? null,
+      division_level: r.division_level ?? null,
+      // median first and mean beside it, never instead of it — see the
+      // note on stanceFilter for why the mean cannot be the sort key.
+      median: st.median ?? null, mean: st.mean ?? null,
+      spread: st.spread ?? null, conflicted: !!st.conflicted,
+      label: st.label ?? null, confidence: st.confidence ?? null,
+      n_classified: st.n_classified ?? 0, n_unclear: st.n_unclear ?? 0,
+      earliest: st.earliest ?? null, latest: st.latest ?? null,
+      fec_id: r.fec_id ?? null, bioguide: r.bioguide ?? null,
+      total_quotes: r.total_quotes ?? null,
+      source_url: r.source_url ?? null,
+    };
+  });
+}
+
+/**
+ * The candidate filter: everyone whose position on one issue falls in a band.
+ *
+ * Ordered and filtered on MEDIAN, deliberately. The mean is not safe as a key
+ * here: Ocasio-Cortez's climate mean is -0.44 against a median of -0.80,
+ * because a single quote about where the Green New Deal idea came from was
+ * read as opposition to it. One stray classification moves a mean; it barely
+ * moves a median. The mean is still returned so a caller can show both and a
+ * reader can see the disagreement.
+ *
+ * Supporting quotes ride along so the filter can always show its evidence —
+ * a stance with no quote behind it is an assertion, not a finding.
+ */
+async function stanceFilter({
+  category, min, max, label, party, state, office, role, minN, limit,
+}) {
+  const K = `category_stance.${category}`;
+  const q = { [`${K}.n_classified`]: { $gte: minN } };
+  const band = {};
+  if (Number.isFinite(min)) band.$gte = min;
+  if (Number.isFinite(max)) band.$lte = max;
+  if (Object.keys(band).length) q[`${K}.median`] = band;
+  else q[`${K}.median`] = { $ne: null };
+  if (label) q[`${K}.label`] = label;
+  if (party) q.party = String(party).toUpperCase();
+  if (state) q.state = String(state).toUpperCase();
+  if (office) q.office = office;
+  if (role) q.role = role;
+
+  const rows = await M(TABLES.issuePositions)
+    .find(q, { _id: 0, name: 1, party: 1, role: 1, ocd_id: 1, state: 1,
+      office: 1, centroid: 1, bioguide: 1, fec_id: 1, total_quotes: 1,
+      division_name: 1, source_url: 1, categories: 1, topics: 1, [K]: 1 })
+    .sort({ [`${K}.median`]: 1 })
+    .limit(limit)
+    .lean();
+
+  return rows.map((r) => {
+    const st = r.category_stance?.[category] ?? {};
+    const [lng, lat] = r.centroid?.coordinates ?? [];
+    // The strongest evidence, by |stance|, so the quotes shown are the ones
+    // actually driving the position rather than the most recent aside.
+    const srcTopics = r.categories?.[category]?.topics ?? [];
+    const quotes = [];
+    for (const t of srcTopics) {
+      for (const p of (r.topics?.[t]?.positions ?? [])) {
+        if (p?.stance?.value == null) continue;
+        quotes.push({
+          text: p.text, dated: p.dated, topic: t,
+          stance: p.stance.value, label: p.stance.label,
+          confidence: p.stance.confidence,
+        });
+      }
+    }
+    quotes.sort((a, b) => Math.abs(b.stance) - Math.abs(a.stance));
+    return {
+      name: r.name, party: r.party, role: r.role, ocd_id: r.ocd_id,
+      state: r.state, office: r.office,
+      lng: lng ?? null, lat: lat ?? null,
+      division_name: r.division_name ?? null,
+      median: st.median ?? null, mean: st.mean ?? null,
+      spread: st.spread ?? null, conflicted: !!st.conflicted,
+      label: st.label ?? null, confidence: st.confidence ?? null,
+      n_classified: st.n_classified ?? 0, n_unclear: st.n_unclear ?? 0,
+      earliest: st.earliest ?? null, latest: st.latest ?? null,
+      fec_id: r.fec_id ?? null, bioguide: r.bioguide ?? null,
+      total_quotes: r.total_quotes ?? null,
+      source_url: r.source_url ?? null,
+      quotes: quotes.slice(0, 3),
+    };
+  });
+}
+
+/**
+ * Per-state aggregate, for seeing the national pattern at a glance.
+ *
+ * Reports the SPLIT either side of zero alongside the central value, because
+ * a state whose delegation is evenly divided and a state whose delegation is
+ * uniformly moderate both average near zero and are not remotely the same
+ * thing. Without the split a swing state and a consensus state paint
+ * identically.
+ */
+async function stanceClusters({ category, minN }) {
+  const K = `category_stance.${category}`;
+  const rows = await M(TABLES.issuePositions).aggregate([
+    { $match: { [`${K}.n_classified`]: { $gte: minN },
+      state: { $nin: [null, ""] } } },
+    { $group: {
+      _id: "$state",
+      medians: { $push: `$${K}.median` },
+      people: { $sum: 1 },
+      neg: { $sum: { $cond: [{ $lt: [`$${K}.median`, 0] }, 1, 0] } },
+      pos: { $sum: { $cond: [{ $gt: [`$${K}.median`, 0] }, 1, 0] } },
+      zero: { $sum: { $cond: [{ $eq: [`$${K}.median`, 0] }, 1, 0] } },
+      conflicted: { $sum: { $cond: [`$${K}.conflicted`, 1, 0] } },
+    } },
+    { $sort: { _id: 1 } },
+  ]);
+  return rows.map((r) => {
+    const xs = (r.medians ?? []).filter((n) => typeof n === "number")
+      .sort((a, b) => a - b);
+    const mid = xs.length
+      ? (xs.length % 2
+        ? xs[(xs.length - 1) / 2]
+        : (xs[xs.length / 2 - 1] + xs[xs.length / 2]) / 2)
+      : null;
+    return {
+      state: r._id,
+      median: mid === null ? null : Math.round(mid * 1000) / 1000,
+      people: r.people, neg: r.neg, pos: r.pos, zero: r.zero,
+      conflicted: r.conflicted,
+      // A delegation split near-evenly is a different fact from one that
+      // agrees on a middling position; both can share a median.
+      divided: r.people > 1 && Math.min(r.neg, r.pos) / r.people >= 0.3,
+    };
+  });
+}
+
+/** How many people have a CLASSIFIED stance per category, not merely quotes. */
+async function stanceCoverage() {
+  const rows = await M(TABLES.issuePositions).aggregate([
+    { $project: { cs: { $objectToArray: "$category_stance" }, role: 1 } },
+    { $unwind: "$cs" },
+    { $match: { "cs.v.median": { $ne: null } } },
+    { $group: {
+      _id: "$cs.k",
+      with_stance: { $sum: 1 },
+      classified: { $sum: "$cs.v.n_classified" },
+      conflicted: { $sum: { $cond: ["$cs.v.conflicted", 1, 0] } },
+      challengers_with_stance: {
+        $sum: { $cond: [{ $eq: ["$role", "challenger"] }, 1, 0] } },
+    } },
+  ]);
+  return new Map(rows.map((r) => [r._id, {
+    with_stance: r.with_stance, classified: r.classified,
+    conflicted: r.conflicted,
+    challengers_with_stance: r.challengers_with_stance,
+  }]));
+}
+
+/**
  * Where people will actually vote in 2026.
  *
  * A DIFFERENT collection from pollingPoints(), and the distinction is the
@@ -870,6 +1057,10 @@ module.exports = {
   positionsForDivision,
   positionsByIssue,
   positionsForPerson,
+  stanceMap,
+  stanceFilter,
+  stanceClusters,
+  stanceCoverage,
   capabilities,
   stats,
 };

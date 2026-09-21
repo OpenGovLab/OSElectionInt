@@ -18,6 +18,9 @@ const {
   getStats,
   getVoterInfo,
   getIssues,
+  getStanceMap,
+  getStanceFilter,
+  getStanceClusters,
   getPolling2026,
   getPositions,
   getPlacePhoto,
@@ -44,6 +47,10 @@ router.get("/stats", longCache, getStats);
 // Current locations, distinct from the historical 2012-2020 layer.
 router.get("/polling-2026", longCache, getPolling2026);
 router.get("/issues", longCache, getIssues);
+// Stance: where people sit on an issue's policy axis.
+router.get("/stance/map", longCache, getStanceMap);
+router.get("/stance/filter", longCache, getStanceFilter);
+router.get("/stance/clusters", longCache, getStanceClusters);
 router.get("/positions", longCache, getPositions);
 router.get("/voter-info", longCache, getVoterInfo);
 router.get("/polling-points", longCache, getPollingPoints);

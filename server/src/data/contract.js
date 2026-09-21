@@ -91,6 +91,29 @@
  *
  * @property {(state:string) => Promise<Object|null>} voterInfo
  *
+ * @property {(a: {category:string, office?:string, role?:string,
+ *   minN:number}) => Promise<Array<Object>>} stanceMap
+ *   One row per person for a stance map layer. Anyone without a centroid is
+ *   omitted rather than emitted at 0,0.
+ *
+ * @property {(a: {category:string, min?:number, max?:number, label?:string,
+ *   party?:string, state?:string, office?:string, role?:string,
+ *   minN:number, limit:number}) => Promise<Array<Object>>} stanceFilter
+ *   Everyone whose position on one issue falls in a band, with the quotes
+ *   that produced it. Filtered and sorted on MEDIAN, never mean — a single
+ *   misread quote moves a mean and barely moves a median.
+ *
+ * @property {(a: {category:string, minN:number}) =>
+ *   Promise<Array<Object>>} stanceClusters
+ *   Per-state aggregate carrying the split either side of zero as well as a
+ *   central value: an evenly divided delegation and a uniformly moderate one
+ *   share a median and are not the same fact.
+ *
+ * @property {() => Promise<Map<string, Object>>} stanceCoverage
+ *   People with a CLASSIFIED stance per category, which is a smaller set than
+ *   people with quotes — the UI must know an issue is filterable before it
+ *   offers a filter.
+ *
  * @property {() => Promise<{ races:boolean, electionNews:boolean,
  *   margins:boolean, officeholders:boolean, candidateHomes:boolean,
  *   pollingPlaces:boolean }>} capabilities
@@ -120,6 +143,30 @@ const TABLES = {
   issuePositions: "us_issue_positions",
 };
 
+/**
+ * Stance axes live in scripts/data/issue_axes.json and are read at runtime,
+ * not copied here. Choosing what the poles of an issue ARE is an editorial
+ * argument rather than a measurement, so it belongs in one reviewable file;
+ * a second copy in server code would drift from it silently and the UI would
+ * start labelling people against poles nobody agreed to.
+ */
+const AXES_PATH = require("path")
+  .join(__dirname, "..", "..", "..", "scripts", "data", "issue_axes.json");
+
+let axesCache = null;
+function loadAxes() {
+  if (axesCache) return axesCache;
+  try {
+    // eslint-disable-next-line global-require
+    axesCache = require(AXES_PATH).axes ?? {};
+  } catch {
+    // A missing axis file must degrade the stance endpoints, never take the
+    // whole API down: everything else here is unrelated to it.
+    axesCache = {};
+  }
+  return axesCache;
+}
+
 const LEVELS = ["state", "county", "cd", "sldu", "sldl"];
 const OFFICES = ["president", "us_senate", "us_house", "governor"];
 
@@ -136,4 +183,6 @@ const LEVEL_OCD_PATTERN = {
   sldl: "/sldl:",
 };
 
-module.exports = { TABLES, LEVELS, OFFICES, LEVEL_OCD_PATTERN };
+module.exports = {
+  TABLES, LEVELS, OFFICES, LEVEL_OCD_PATTERN, loadAxes, AXES_PATH,
+};

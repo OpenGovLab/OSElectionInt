@@ -1,4 +1,5 @@
 const repo = require("./data");
+const { loadAxes } = require("./data/contract");
 
 /**
  * US election map data.
@@ -478,8 +479,35 @@ exports.getPolling2026 = async (req, res) => {
 
 exports.getIssues = async (req, res) => {
   try {
-    const rows = await repo.issueCategories();
-    res.json({ success: true, data: { count: rows.length, rows } });
+    const [rows, coverage] = await Promise.all([
+      repo.issueCategories(),
+      repo.stanceCoverage().catch(() => new Map()),
+    ]);
+    const axes = loadAxes();
+    res.json({
+      success: true,
+      data: {
+        count: rows.length,
+        rows: rows.map((r) => {
+          const cov = coverage.get(r.category) ?? {};
+          const axis = axes[r.category] ?? null;
+          return {
+            ...r,
+            axis: axis ? { neg: axis.neg, pos: axis.pos } : null,
+            icon: axis?.icon ?? null,
+            // People with QUOTES is not people with a STANCE: a quote that
+            // carries no position on the axis is classified `unclear` and
+            // never becomes one. Offering a filter on a category where this
+            // is small would open on an almost-empty room.
+            with_stance: cov.with_stance ?? 0,
+            quotes_classified: cov.classified ?? 0,
+            conflicted: cov.conflicted ?? 0,
+            challengers_with_stance: cov.challengers_with_stance ?? 0,
+            filterable: !!axis && (cov.with_stance ?? 0) > 0,
+          };
+        }),
+      },
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -533,6 +561,157 @@ exports.getPositions = async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * Shared caveat for everything derived from the stance classifier.
+ *
+ * Stated on every response rather than in documentation, because these rows
+ * are an INFERENCE about named living people and a client that drops the
+ * caveat would be presenting our reading of a quote as the person's own
+ * position.
+ */
+const STANCE_CAVEAT = "Stance is inferred by a language model from quotes "
+  + "compiled by OnTheIssues.org — it is our reading of what someone said, "
+  + "not their own words, and the underlying quotes are returned so a reader "
+  + "can check it. Positions are placed on a policy axis, not a political "
+  + "identity. Coverage is heavily incumbency-biased: the median sitting "
+  + "member has far more on record than a challenger, so a thin or absent "
+  + "stance means little has been written down, never that someone holds no "
+  + "position. `median` is the honest summary; `mean` is returned beside it "
+  + "and can be pulled by a single misread quote.";
+
+/** Resolve and validate a category against the axis file. */
+const stanceCategory = (req, res) => {
+  const category = String(req.query.category || "").trim();
+  if (!category) {
+    res.status(400).json({ success: false, message: "category is required" });
+    return null;
+  }
+  const axes = loadAxes();
+  if (!axes[category]) {
+    res.status(400).json({
+      success: false,
+      message: `unknown category. Known: ${Object.keys(axes).join(", ")}`,
+    });
+    return null;
+  }
+  return { category, axis: axes[category] };
+};
+
+/**
+ * GET /api/us-election/stance/map?category=&office=&role=&min_n=
+ *
+ * One point per person for a stance layer. People sharing a division share a
+ * centroid, so the client must cluster or jitter rather than stack them.
+ */
+exports.getStanceMap = async (req, res) => {
+  try {
+    const picked = stanceCategory(req, res);
+    if (!picked) return undefined;
+    const minN = clampInt(req.query.min_n, 1, 1, 100);
+    const rows = await repo.stanceMap({
+      category: picked.category,
+      office: req.query.office ? String(req.query.office) : null,
+      role: req.query.role ? String(req.query.role) : null,
+      minN,
+    });
+    return res.json({
+      success: true,
+      data: {
+        category: picked.category,
+        axis: { neg: picked.axis.neg, pos: picked.axis.pos },
+        icon: picked.axis.icon ?? null,
+        min_n: minN,
+        count: rows.length,
+        rows,
+        source: "OnTheIssues.org",
+        caveat: STANCE_CAVEAT,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * GET /api/us-election/stance/filter?category=&min=&max=&label=&party=&state=
+ *                                   &office=&role=&min_n=&limit=
+ *
+ * "Find everyone who leans toward fewer restrictions on firearms." Banded on
+ * median, with the quotes that produced each position attached.
+ */
+exports.getStanceFilter = async (req, res) => {
+  try {
+    const picked = stanceCategory(req, res);
+    if (!picked) return undefined;
+    const num = (v) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? Math.min(1, Math.max(-1, n)) : undefined;
+    };
+    const rows = await repo.stanceFilter({
+      category: picked.category,
+      min: num(req.query.min),
+      max: num(req.query.max),
+      label: req.query.label ? String(req.query.label) : null,
+      party: req.query.party ? String(req.query.party) : null,
+      state: req.query.state ? String(req.query.state) : null,
+      office: req.query.office ? String(req.query.office) : null,
+      role: req.query.role ? String(req.query.role) : null,
+      minN: clampInt(req.query.min_n, 1, 1, 100),
+      limit: clampInt(req.query.limit, 60, 1, 400),
+    });
+    return res.json({
+      success: true,
+      data: {
+        category: picked.category,
+        axis: { neg: picked.axis.neg, pos: picked.axis.pos },
+        icon: picked.axis.icon ?? null,
+        count: rows.length,
+        rows,
+        source: "OnTheIssues.org",
+        caveat: STANCE_CAVEAT,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * GET /api/us-election/stance/clusters?category=&level=state&min_n=
+ *
+ * The national pattern. Carries the split either side of zero, because an
+ * evenly divided delegation and a uniformly moderate one share a median.
+ */
+exports.getStanceClusters = async (req, res) => {
+  try {
+    const picked = stanceCategory(req, res);
+    if (!picked) return undefined;
+    const level = String(req.query.level || "state");
+    if (level !== "state") {
+      return res.status(400).json({
+        success: false, message: "only level=state is supported",
+      });
+    }
+    const minN = clampInt(req.query.min_n, 1, 1, 100);
+    const rows = await repo.stanceClusters({ category: picked.category, minN });
+    return res.json({
+      success: true,
+      data: {
+        category: picked.category, level,
+        axis: { neg: picked.axis.neg, pos: picked.axis.pos },
+        icon: picked.axis.icon ?? null,
+        min_n: minN,
+        count: rows.length,
+        rows,
+        source: "OnTheIssues.org",
+        caveat: STANCE_CAVEAT,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
 
