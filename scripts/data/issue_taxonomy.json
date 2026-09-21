@@ -12,33 +12,78 @@
   ],
   "source_vocabulary": "ontheissues.org",
   "source_topic_count": 24,
-  "product_category_count": 19,
-
+  "product_category_count": 20,
   "map": {
-    "Health Care":          ["Healthcare and Public Health"],
-    "Budget & Economy":     ["Economy and Finance"],
-    "Corporations":         ["Economy and Finance"],
-    "Free Trade":           ["Economy and Finance"],
-    "Tax Reform":           ["Economy and Finance"],
-    "Education":            ["Education"],
-    "Foreign Policy":       ["Foreign Policy and National Security"],
-    "Homeland Security":    ["Foreign Policy and National Security"],
-    "War & Peace":          ["Foreign Policy and National Security"],
-    "Immigration":          ["Immigration"],
-    "Energy & Oil":         ["Climate Change and Environment"],
-    "Environment":          ["Climate Change and Environment"],
-    "Civil Rights":         ["Social Justice and Civil Rights"],
-    "Crime":                ["Social Justice and Civil Rights"],
-    "Families & Children":  ["Social Justice and Civil Rights"],
-    "Jobs":                 ["Labor and Employment"],
-    "Gun Control":          ["Gun Policy"],
-    "Government Reform":    ["Government Reform"],
-    "Social Security":      ["Social Welfare Programs"],
-    "Welfare & Poverty":    ["Social Welfare Programs"],
-    "Technology":           ["Science and Technology"],
-    "Drugs":                ["Drug Policy"]
+    "Health Care": [
+      "Healthcare and Public Health"
+    ],
+    "Budget & Economy": [
+      "Economy and Finance"
+    ],
+    "Corporations": [
+      "Economy and Finance"
+    ],
+    "Free Trade": [
+      "Economy and Finance"
+    ],
+    "Tax Reform": [
+      "Economy and Finance"
+    ],
+    "Education": [
+      "Education"
+    ],
+    "Foreign Policy": [
+      "Foreign Policy and National Security"
+    ],
+    "Homeland Security": [
+      "Foreign Policy and National Security"
+    ],
+    "War & Peace": [
+      "Foreign Policy and National Security"
+    ],
+    "Immigration": [
+      "Immigration"
+    ],
+    "Energy & Oil": [
+      "Climate Change and Environment"
+    ],
+    "Environment": [
+      "Climate Change and Environment"
+    ],
+    "Civil Rights": [
+      "Social Justice and Civil Rights"
+    ],
+    "Crime": [
+      "Social Justice and Civil Rights"
+    ],
+    "Families & Children": [
+      "Social Justice and Civil Rights"
+    ],
+    "Jobs": [
+      "Labor and Employment"
+    ],
+    "Gun Control": [
+      "Gun Policy"
+    ],
+    "Government Reform": [
+      "Government Reform"
+    ],
+    "Social Security": [
+      "Social Welfare Programs"
+    ],
+    "Welfare & Poverty": [
+      "Social Welfare Programs"
+    ],
+    "Technology": [
+      "Science and Technology"
+    ],
+    "Drugs": [
+      "Drug Policy"
+    ],
+    "Abortion": [
+      "Abortion and Reproductive Rights"
+    ]
   },
-
   "unmapped_source_topics": {
     "Principles & Values": [
       "OnTheIssues uses this for religion, ideology and general political",
@@ -49,7 +94,6 @@
       "Kept and surfaced under its own name instead."
     ]
   },
-
   "unpopulated_categories": {
     "Infrastructure and Transportation": "no OnTheIssues source topic",
     "Veterans Affairs": "no OnTheIssues source topic",
@@ -58,7 +102,6 @@
     "Constitutional Issues": "no OnTheIssues source topic; see Principles & Values note",
     "International Development and Human Rights": "partially inside Foreign Policy, but not separable at source"
   },
-
   "notes": {
     "many_to_one": [
       "Economy and Finance draws on four source topics; Foreign Policy and",
@@ -70,6 +113,7 @@
       "product taxonomy puts Criminal Justice Reform and Police Reform there.",
       "OnTheIssues uses the topic for both reform and enforcement positions,",
       "so the category mixes both stances."
-    ]
+    ],
+    "abortion_category": "Abortion is given its own product category rather than folded into Social Justice and Civil Rights, where the supplied taxonomy filed it under 'Women's Rights and Gender Equality'. Two reasons. It is the second-largest source topic at 2,609 quotes across 346 people, and Social Justice already carries 4,650 — merging them would let abortion dominate a category it is only one part of, while making it unpickable on its own. And it is among the most consequential issues a reader would come here to filter by; burying it inside a broader heading would be a worse answer than adding a category. This raises the product taxonomy from 19 categories to 20."
   }
 }

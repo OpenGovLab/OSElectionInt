@@ -66,6 +66,11 @@
       "neg": "more public investment and regulation",
       "pos": "less regulation and more market-led",
       "icon": "cpu"
+    },
+    "Abortion and Reproductive Rights": {
+      "neg": "broader access to abortion",
+      "pos": "more restriction on abortion",
+      "icon": "stethoscope"
     }
   },
   "_known_gaps": "The corpus predates the current technology debate almost entirely. Measured across all 531 people: 'artificial intelligence' appears 0 times, 'data center' 0, 'semiconductor' 0, 'crypto' 2, 'privacy' 3. Only 'surveillance' (55) and 'broadband' (17) have any volume. Any UI offering an AI or data-centre filter would be answering from nothing, and must not be built against this source."
