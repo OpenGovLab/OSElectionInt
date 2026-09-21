@@ -1,0 +1,72 @@
+{
+  "_comment": "Stance axes, one per product category. EDITORIAL by construction: choosing what the poles of an issue are is an argument, not a measurement, which is why this lives in a data file that can be challenged rather than inside code. Every axis is named from the POLICY DIRECTION, never from a political identity — 'more restriction' not 'anti-gun', 'more enforcement' not 'anti-immigrant'. A person is placed by what they said about policy; no axis is allowed to imply a tribe.",
+  "_scale": "-1.0 = the negative pole, +1.0 = the positive pole, 0 = balanced or explicitly both-ways. null = the statement carries no position on this axis.",
+  "axes": {
+    "Gun Policy": {
+      "neg": "more restriction on firearms",
+      "pos": "fewer restrictions on firearms",
+      "icon": "shield"
+    },
+    "Immigration": {
+      "neg": "more openness and legal pathways",
+      "pos": "more enforcement and restriction",
+      "icon": "route"
+    },
+    "Climate Change and Environment": {
+      "neg": "more government action on emissions",
+      "pos": "less government action on emissions",
+      "icon": "leaf"
+    },
+    "Healthcare and Public Health": {
+      "neg": "larger public role in health coverage",
+      "pos": "larger market role in health coverage",
+      "icon": "heart"
+    },
+    "Economy and Finance": {
+      "neg": "more redistribution and regulation",
+      "pos": "lower taxes and lighter regulation",
+      "icon": "chart"
+    },
+    "Social Justice and Civil Rights": {
+      "neg": "stronger civil-rights protections and remedies",
+      "pos": "narrower civil-rights remedies",
+      "icon": "scales"
+    },
+    "Education": {
+      "neg": "more public funding and public-school focus",
+      "pos": "more school choice and private options",
+      "icon": "book"
+    },
+    "Foreign Policy and National Security": {
+      "neg": "diplomacy and multilateral engagement first",
+      "pos": "military strength and unilateral action first",
+      "icon": "globe"
+    },
+    "Government Reform": {
+      "neg": "more transparency, ethics and voting access",
+      "pos": "fewer procedural constraints",
+      "icon": "gavel"
+    },
+    "Labor and Employment": {
+      "neg": "stronger worker and union protections",
+      "pos": "more employer flexibility",
+      "icon": "hardhat"
+    },
+    "Drug Policy": {
+      "neg": "legalisation and treatment-led approaches",
+      "pos": "prohibition and enforcement-led approaches",
+      "icon": "pill"
+    },
+    "Social Welfare Programs": {
+      "neg": "broader safety net",
+      "pos": "narrower safety net and more conditions",
+      "icon": "hands"
+    },
+    "Science and Technology": {
+      "neg": "more public investment and regulation",
+      "pos": "less regulation and more market-led",
+      "icon": "cpu"
+    }
+  },
+  "_known_gaps": "The corpus predates the current technology debate almost entirely. Measured across all 531 people: 'artificial intelligence' appears 0 times, 'data center' 0, 'semiconductor' 0, 'crypto' 2, 'privacy' 3. Only 'surveillance' (55) and 'broadband' (17) have any volume. Any UI offering an AI or data-centre filter would be answering from nothing, and must not be built against this source."
+}
