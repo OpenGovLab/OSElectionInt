@@ -1,3 +1,4 @@
+import PersonLinks, { type Social } from "./PersonLinks";
 import Portrait from "./Portrait";
 
 /**
@@ -23,6 +24,10 @@ export interface Person {
   url?: string;
   bioguide?: string;
   photo?: string | null;
+  social?: Social | null;
+  wikipedia?: string | null;
+  ballotpedia?: string | null;
+  opensecrets?: string | null;
   ideology?: { nominate_dim1: number | null; votes_analysed: number; congress: number };
   committees?: { name: string; parent?: string | null; rank: string | null }[];
   finance?: {
@@ -52,12 +57,27 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** Where this member sits on the roll-call axis, drawn as a position on a line. */
+/**
+ * Where this member sits on the roll-call axis, drawn as a position on a line.
+ *
+ * ONE axis, deliberately. DW-NOMINATE's first dimension separates the parties
+ * almost completely (it classifies party 99.8% of the time); the second
+ * separates them barely better than a coin toss (59.7%) and is close to
+ * residual variation in the modern era. Plotting dim1 against dim2 as an
+ * economic/social compass reads as rigour and is not: it puts Ocasio-Cortez
+ * (dim2 -0.94) and Chip Roy (dim2 -0.60) on the same side.
+ *
+ * No word is attached to a position either. The marker and the number are
+ * shown; calling a living person "moderate" or "far-right" is our judgement
+ * dressed as their data.
+ */
 function IdeologyScale({ dim1, party }: { dim1: number; party: string }) {
   const pct = ((dim1 + 1) / 2) * 100;           // -1..+1 -> 0..100
   const dot = party === "DEM" ? "bg-blue-600" : party === "REP" ? "bg-red-600" : "bg-slate-600";
   return (
-    <div className="mt-1.5">
+    <div className="mt-1.5"
+      title="DW-NOMINATE first dimension, from roll-call votes in the 119th Congress (Voteview). Summarises how they voted, not what they say.">
+
       <div className="relative h-1.5 w-full rounded-full"
         style={{ background: "linear-gradient(to right,#1d4ed8,#e2e8f0,#b91c1c)" }}>
         <span
@@ -90,6 +110,13 @@ export default function PersonDetail({ person, onBack }: { person: Person; onBac
             {partyName(p.party)} · {OFFICE_LABEL[p.office] ?? p.office}
             {p.senate_class ? ` · class ${p.senate_class}` : ""}
           </p>
+          <PersonLinks
+            className="mt-1"
+            social={p.social}
+            wikipedia={p.wikipedia}
+            ballotpedia={p.ballotpedia}
+            opensecrets={p.opensecrets}
+          />
         </div>
       </div>
 
@@ -112,7 +139,7 @@ export default function PersonDetail({ person, onBack }: { person: Person; onBac
             <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
               Position derived from every roll-call vote cast this Congress.
               It summarises how they voted — not their stated positions.
-              Source: Voteview.
+              Source: DW-NOMINATE, Voteview, 119th Congress.
             </p>
           </section>
         )}

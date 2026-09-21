@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { apiService } from "@/lib/api";
+import PersonLinks, { type Social } from "./PersonLinks";
 import Portrait from "./Portrait";
 
 /**
@@ -19,16 +20,21 @@ interface Cand {
   pac_contrib: number; debts: number; ballot_status: string;
   coverage_end: string | null; fec_id: string; ocd_id: string;
   photo?: string | null; bioguide?: string;
+  social?: Social | null; wikipedia?: string | null;
+  ballotpedia?: string | null; opensecrets?: string | null;
 }
 interface Record_ {
   name: string; party: string; office: string; term_start?: string;
   term_end?: string; next_election?: string | null; url?: string;
   ideology?: { nominate_dim1: number | null; votes_analysed: number };
   committees?: { name: string; parent?: string | null; rank: string | null }[];
+  social?: Social | null; wikipedia?: string | null;
+  ballotpedia?: string | null; opensecrets?: string | null;
 }
 interface Opp {
   name: string; party: string; status: string | null; receipts: number;
   fec_id: string; photo?: string | null;
+  social?: Social | null; wikipedia?: string | null;
 }
 interface Hist { year: number; office: string; margin: number | null; winner_party: string }
 
@@ -95,6 +101,13 @@ export default function CandidateDetail({
             {" · "}{c.status ?? "filed"}{" · "}{OFFICE[c.office] ?? c.office}
             {c.district ? ` ${c.state}-${c.district}` : c.state ? ` ${c.state}` : ""}
           </p>
+          <PersonLinks
+            className="mt-1"
+            social={rec?.social ?? c.social}
+            wikipedia={rec?.wikipedia ?? c.wikipedia}
+            ballotpedia={rec?.ballotpedia ?? c.ballotpedia}
+            opensecrets={rec?.opensecrets ?? c.opensecrets}
+          />
         </div>
       </div>
 
@@ -145,7 +158,8 @@ export default function CandidateDetail({
               )}
               <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
                 Derived from every roll-call vote cast. Summarises how they
-                voted — not their stated positions. Source: Voteview.
+                voted — not their stated positions.
+                Source: DW-NOMINATE, Voteview, 119th Congress.
               </p>
             </>
           ) : (
@@ -184,16 +198,23 @@ export default function CandidateDetail({
             <h3 className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
               Also running ({opponents.length})
             </h3>
+            {/* The row is a button and the handles are links, so they are
+                siblings rather than nested — an anchor inside a button is
+                invalid and swallows one of the two clicks. */}
             {opponents.map((o) => (
-              <button key={o.fec_id} onClick={() => onOpen?.(o.fec_id)}
-                className="mb-1 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800">
-                <Portrait src={o.photo} name={o.name} party={o.party} size={26} />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[11px] font-medium text-slate-800 dark:text-slate-100">{o.name}</span>
-                  <span className={`block text-[10px] ${partyText(o.party)}`}>{o.party} · {o.status ?? "filed"}</span>
-                </span>
-                <span className="shrink-0 text-[10px] tabular-nums text-slate-500">{money(o.receipts)}</span>
-              </button>
+              <div key={o.fec_id}
+                className="mb-1 flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-800">
+                <button onClick={() => onOpen?.(o.fec_id)}
+                  className="flex min-w-0 flex-1 items-center gap-2 text-left">
+                  <Portrait src={o.photo} name={o.name} party={o.party} size={26} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[11px] font-medium text-slate-800 dark:text-slate-100">{o.name}</span>
+                    <span className={`block text-[10px] ${partyText(o.party)}`}>{o.party} · {o.status ?? "filed"}</span>
+                  </span>
+                  <span className="shrink-0 text-[10px] tabular-nums text-slate-500">{money(o.receipts)}</span>
+                </button>
+                <PersonLinks social={o.social} wikipedia={o.wikipedia} />
+              </div>
             ))}
           </section>
         )}

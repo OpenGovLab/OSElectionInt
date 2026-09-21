@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { marginLabel, moneyLabel } from "@/config/usElectionMap";
 import { apiService } from "@/lib/api";
 
+import PersonLinks, { type Social } from "./PersonLinks";
 import Portrait from "./Portrait";
 import VoterInfo from "./VoterInfo";
 
@@ -26,6 +27,10 @@ export interface Holder {
   bioguide?: string;
   term_start?: string | null;
   term_end?: string | null;
+  social?: Social | null;
+  wikipedia?: string | null;
+  ballotpedia?: string | null;
+  opensecrets?: string | null;
   ideology?: { nominate_dim1: number | null; votes_analysed: number; congress: number };
   committees?: { name: string; parent?: string | null; rank: string | null }[];
   finance?: {
@@ -50,6 +55,10 @@ export interface Candidate {
   fec_id?: string;
   photo?: string | null;
   bioguide?: string;
+  social?: Social | null;
+  wikipedia?: string | null;
+  ballotpedia?: string | null;
+  opensecrets?: string | null;
   /** Set by the API when this filer already holds the seat. */
   sitting?: boolean;
 }
@@ -612,11 +621,23 @@ function MoneyBar({ value, max, party, muted }: {
 function ChallengerRow({ c, max, onOpen }: {
   c: Candidate; max: number; onOpen?: () => void;
 }) {
+  const links = (
+    <PersonLinks
+      social={c.social}
+      wikipedia={c.wikipedia}
+      ballotpedia={c.ballotpedia}
+      opensecrets={c.opensecrets}
+    />
+  );
   return (
+    /* The card is a button and the handles are links. An anchor nested in a
+       button is invalid HTML and one of the two clicks gets eaten, so the
+       link bar is a sibling laid over the same card. */
+    <div className="mb-1.5 rounded-lg border border-black/5 hover:bg-slate-50 dark:border-white/5 dark:hover:bg-slate-800">
     <button
       onClick={onOpen}
       disabled={!onOpen}
-      className="mb-1.5 block w-full rounded-lg border border-black/5 px-2.5 py-2 text-left hover:bg-slate-50 disabled:cursor-default dark:border-white/5 dark:hover:bg-slate-800"
+      className="block w-full rounded-lg px-2.5 pb-1 pt-2 text-left disabled:cursor-default"
     >
       <div className="flex items-center gap-2.5">
         <Portrait src={c.photo} name={c.name} party={c.party} size={40} />
@@ -641,21 +662,64 @@ function ChallengerRow({ c, max, onOpen }: {
         </span>
       </div>
     </button>
+      {/* Indented to clear the 40px portrait, so the handles line up with
+          the name they belong to rather than the card edge. */}
+      <div className="flex justify-end px-2.5 pb-1.5 pl-[3.6rem] empty:hidden">
+        {links}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A member's position on the roll-call axis, as a tick on a line.
+ *
+ * Only the FIRST DW-NOMINATE dimension is ever drawn. The second separates
+ * the parties barely better than chance and would put Ocasio-Cortez and Chip
+ * Roy on the same side of a "social" axis — a compass built from it would
+ * look rigorous and be wrong. No label is attached to the position either.
+ */
+function IdeologyTick({ dim1, party }: { dim1: number; party: string }) {
+  const pct = Math.min(97, Math.max(3, ((dim1 + 1) / 2) * 100));
+  const dot = party === "DEM" ? "bg-blue-600" : party === "REP" ? "bg-red-600" : "bg-slate-600";
+  return (
+    <span
+      className="mt-1 block"
+      title={`DW-NOMINATE ${dim1.toFixed(2)} on the economic axis (-1 liberal to +1 conservative), from roll-call votes in the 119th Congress. Source: Voteview.`}
+    >
+      <span className="relative block h-1 w-full rounded-full"
+        style={{ background: "linear-gradient(to right,#1d4ed8,#e2e8f0,#b91c1c)" }}>
+        <span className={`absolute -top-[3px] h-[7px] w-[7px] rounded-full border border-white shadow-sm ${dot}`}
+          style={{ left: `calc(${pct}% - 3.5px)` }} />
+      </span>
+    </span>
   );
 }
 
 /** A sitting member, deliberately quieter. */
 function SeatHolderRow({
-  name, party, photo, sub, receipts, max, onOpen,
+  name, party, photo, sub, receipts, max, onOpen, holder,
 }: {
   name: string; party: string; photo?: string | null; sub: string;
   receipts: number | null; max: number; onOpen?: () => void;
+  /** Supplies the voting-record tick and the outbound links, when known. */
+  holder?: Holder;
 }) {
+  const dim1 = holder?.ideology?.nominate_dim1;
+  const links = (
+    <PersonLinks
+      social={holder?.social}
+      wikipedia={holder?.wikipedia}
+      ballotpedia={holder?.ballotpedia}
+      opensecrets={holder?.opensecrets}
+    />
+  );
   return (
+    <div className="mb-1 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/60">
     <button
       onClick={onOpen}
       disabled={!onOpen}
-      className="mb-1 block w-full rounded-lg px-2 py-1.5 text-left hover:bg-slate-50 disabled:cursor-default dark:hover:bg-slate-800/60"
+      className="block w-full rounded-lg px-2 pb-0.5 pt-1.5 text-left disabled:cursor-default"
     >
       <div className="flex items-center gap-2">
         <Portrait src={photo} name={name} party={party} size={28} />
@@ -677,9 +741,15 @@ function SeatHolderRow({
           {receipts != null && receipts > 0 && (
             <MoneyBar value={receipts} max={max} party={party} muted />
           )}
+          {/* Absent for anyone who has not cast roll-call votes. Nothing is
+              drawn in that case — an empty axis or a centred tick would
+              read as "this person is a centrist", which is a claim. */}
+          {dim1 != null && <IdeologyTick dim1={dim1} party={party} />}
         </span>
       </div>
     </button>
+      <div className="flex justify-end px-2 pb-1 pl-10 empty:hidden">{links}</div>
+    </div>
   );
 }
 
@@ -787,6 +857,7 @@ function OfficeRace({
                 ].filter(Boolean).join(" · ")}
                 receipts={c.receipts}
                 max={f.max}
+                holder={h}
                 onOpen={openSeated(c)}
               />
             );
@@ -805,6 +876,7 @@ function OfficeRace({
               ].filter(Boolean).join(" · ")}
               receipts={null}
               max={f.max}
+              holder={h}
               onOpen={onSelectPerson ? () => onSelectPerson(h) : undefined}
             />
           ))}
