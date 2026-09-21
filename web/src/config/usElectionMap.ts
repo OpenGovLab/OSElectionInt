@@ -353,3 +353,81 @@ export const POLLS_COLOR = "#b45309";
 export function pollsRadius(): unknown[] {
   return ["interpolate", ["linear"], ["zoom"], 9, 2, 12, 3.5, 16, 6];
 }
+
+
+/**
+ * Where people will ACTUALLY vote in 2026.
+ *
+ * A separate source and a separate colour from POLLS_SOURCE on purpose. That
+ * layer is 2012-2020 — where booths stood — and reading it as current advice
+ * sends someone to a building that may have closed two elections ago. This
+ * one comes from the states' own VIP feeds and is the live answer.
+ *
+ * Violet, because every other hue on this map is already spoken for: amber is
+ * the historical booths and the news rings, teal is candidate home towns,
+ * blue and red are the parties, and cyan is interface chrome. A layer about
+ * voting must not borrow a colour that already means something else.
+ */
+export const VOTE26_SOURCE = "us-vote-2026";
+
+/**
+ * Deliberately lower than POLLS_MIN_ZOOM (9).
+ *
+ * That floor exists because 216,822 historical rows blanket the choropleth at
+ * country zoom. This dataset is currently EIGHT rows nationally — only
+ * Virginia's feed has published — so the same floor would hide the layer
+ * entirely unless a reader happened to zoom into Richmond. Raise this as
+ * feeds come online and the count climbs.
+ */
+export const VOTE26_MIN_ZOOM = 5;
+
+/**
+ * The three kinds are three different acts and must not read as one.
+ * Dropping a mail ballot into a box is not voting in person, and a reader
+ * who conflates them can turn up somewhere that cannot take their vote.
+ */
+export const VOTE26_COLORS = {
+  pollingLocations: "#a855f7",
+  earlyVoteSites: "#c084fc",
+  dropOffLocations: "#7c3aed",
+} as const;
+
+export const VOTE26_KIND_LABEL: Record<string, string> = {
+  pollingLocations: "Vote here on election day",
+  earlyVoteSites: "Early voting site",
+  dropOffLocations: "Ballot drop-off — not in-person voting",
+};
+
+/** Colour by kind, so the act is legible before anything is clicked. */
+export function vote26Color(): unknown[] {
+  return [
+    "match", ["get", "kind"],
+    "pollingLocations", VOTE26_COLORS.pollingLocations,
+    "earlyVoteSites", VOTE26_COLORS.earlyVoteSites,
+    "dropOffLocations", VOTE26_COLORS.dropOffLocations,
+    "#a855f7",
+  ];
+}
+
+/**
+ * Election-day sites are drawn largest. Among the three this is the one with
+ * a deadline attached, so it should be the one the eye lands on.
+ */
+export function vote26Radius(scale = 1): unknown[] {
+  const r = (n: number) => n * scale;
+  return [
+    "interpolate", ["linear"], ["zoom"],
+    5, ["match", ["get", "kind"], "pollingLocations", r(4), r(3)],
+    9, ["match", ["get", "kind"], "pollingLocations", r(7), r(5)],
+    14, ["match", ["get", "kind"], "pollingLocations", r(11), r(8)],
+  ];
+}
+
+/**
+ * Drop-off boxes are drawn hollow: a ring rather than a filled dot. The
+ * colour difference alone is too subtle to carry "you cannot vote here", and
+ * that is the one distinction on this layer with a real-world cost.
+ */
+export function vote26FillOpacity(): unknown[] {
+  return ["match", ["get", "kind"], "dropOffLocations", 0.15, 0.9];
+}

@@ -17,7 +17,7 @@
  * of state and another setLayoutProperty call site.
  */
 
-export type OverlayId = "races" | "news" | "homes" | "polls";
+export type OverlayId = "races" | "news" | "homes" | "polls" | "vote2026";
 
 export interface OverlayDef {
   id: OverlayId;
@@ -75,6 +75,20 @@ export const OVERLAYS: OverlayDef[] = [
     // see getCapabilities. Until the places ingest runs this stays hidden
     // rather than offering a toggle that turns on an empty layer.
     requires: "candidateHomes",
+    defaultOn: false,
+  },
+  {
+    id: "vote2026",
+    // "Vote here" and not "Polling 2026": there are two polling layers on
+    // this map and the reader must not have to work out which one is current.
+    label: "Vote here (2026)",
+    hint: "Election-day sites, early voting and ballot drop-off, from the "
+      + "states' own feeds — only Virginia has published so far",
+    layerIds: ["vote26-glow", "vote26-dot"],
+    // Deliberately NO `requires`. The other overlays gate on a capability
+    // because an empty one looks broken. This one is informative when empty —
+    // "your state has not published yet" is the answer a reader needs 43 days
+    // out, and hiding the toggle would withhold it.
     defaultOn: false,
   },
   {

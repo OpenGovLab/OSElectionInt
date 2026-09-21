@@ -19,6 +19,12 @@ import {
   POLLS_MIN_ZOOM,
   POLLS_COLOR,
   pollsRadius,
+  VOTE26_SOURCE,
+  VOTE26_MIN_ZOOM,
+  VOTE26_KIND_LABEL,
+  vote26Color,
+  vote26Radius,
+  vote26FillOpacity,
   newsRadius,
   HOME_SOURCE,
   HOME_COLOR,
@@ -398,6 +404,14 @@ export default function USElectionPage({
     x: number; y: number; name: string; address: string; year: number;
     kind: string; county: string; exact: boolean; lat: number; lng: number;
   } | null>(null);
+  const [vote26Tip, setVote26Tip] = useState<{
+    x: number; y: number; name: string; address: string; hours: string | null;
+    kind: string; state: string; notes: string | null;
+    start: string | null; end: string | null;
+  } | null>(null);
+  // Coverage comes FROM the API response rather than being restated here, so
+  // a caveat cannot drift out of step with the data it describes.
+  const [vote26, setVote26] = useState<{ count: number; coverage: string } | null>(null);
   const [homeTip, setHomeTip] = useState<{
     x: number; y: number; place: string; candidates: number;
     dem: number; rep: number; other: number;
@@ -643,11 +657,12 @@ export default function USElectionPage({
       for (const id of ["race-glow", "race-dot", "race-label",
                         "news-glow", "news-dot",
                         "polls-glow", "polls-dot",
+                        "vote26-glow", "vote26-dot",
                         "home-glow", "home-dot"]) {
         if (map.getLayer(id)) map.removeLayer(id);
       }
       for (const src of [SOURCE_ID, LABEL_SOURCE, RACE_SOURCE, NEWS_SOURCE, POLLS_SOURCE,
-                         HOME_SOURCE]) {
+                         VOTE26_SOURCE, HOME_SOURCE]) {
         if (map.getSource(src)) map.removeSource(src);
       }
       // promoteId lets feature state be keyed by division id, which is stable
@@ -740,6 +755,10 @@ export default function USElectionPage({
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },
       });
+      map.addSource(VOTE26_SOURCE, {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
       map.addSource(RACE_SOURCE, {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },
@@ -828,6 +847,34 @@ export default function USElectionPage({
           "circle-stroke-color": "#fff",
           "circle-stroke-opacity": 0.8,
           "circle-opacity": 0.85,
+        },
+      });
+      // Current 2026 locations. Drawn ABOVE the historical booths: where the
+      // two overlap, the live answer must be the one on top.
+      map.addLayer({
+        id: "vote26-glow", type: "circle", source: VOTE26_SOURCE,
+        minzoom: VOTE26_MIN_ZOOM,
+        layout: { visibility: "none" },
+        paint: {
+          "circle-color": vote26Color() as never,
+          "circle-radius": vote26Radius(2.1) as never,
+          "circle-blur": 1,
+          "circle-opacity": 0.35,
+        },
+      });
+      map.addLayer({
+        id: "vote26-dot", type: "circle", source: VOTE26_SOURCE,
+        minzoom: VOTE26_MIN_ZOOM,
+        layout: { visibility: "none" },
+        paint: {
+          "circle-color": vote26Color() as never,
+          "circle-radius": vote26Radius() as never,
+          // Hollow for drop-off boxes — see vote26FillOpacity. Colour alone
+          // cannot carry "you cannot cast a vote here in person".
+          "circle-opacity": vote26FillOpacity() as never,
+          "circle-stroke-width": 1.6,
+          "circle-stroke-color": vote26Color() as never,
+          "circle-stroke-opacity": 0.95,
         },
       });
       map.addLayer({
@@ -1118,6 +1165,88 @@ export default function USElectionPage({
       map.off("idle", schedule);
     };
   }, [overlays.polls, ready, styleEpoch]);
+
+  // ── current 2026 locations, fetched per viewport ─────────────────────
+  //
+  // Same bbox-on-idle shape as the historical layer. The dataset is tiny
+  // today — eight rows, all Virginia — but it grows every time a state
+  // publishes its VIP feed, so it is bounded from the start rather than
+  // being rewritten later under load.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    if (!overlays.vote2026) {
+      const src = map.getSource(VOTE26_SOURCE) as maplibregl.GeoJSONSource | undefined;
+      src?.setData({ type: "FeatureCollection", features: [] });
+      setVote26(null);
+      return;
+    }
+    let alive = true;
+    const load = () => {
+      if (!alive || map.getZoom() < VOTE26_MIN_ZOOM) return;
+      const b = map.getBounds();
+      const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]
+        .map((n) => n.toFixed(4)).join(",");
+      apiService({
+        method: "get",
+        url: `/us-election/polling-2026?bbox=${bbox}&limit=800`,
+      })
+        .then((r) => {
+          if (!alive) return;
+          const d = (r as { data?: { data?: {
+            features?: unknown[]; coverage?: string; count?: number } } })?.data?.data;
+          const src = map.getSource(VOTE26_SOURCE) as maplibregl.GeoJSONSource | undefined;
+          src?.setData({
+            type: "FeatureCollection",
+            features: (d?.features ?? []) as never[],
+          });
+          setVote26({ count: d?.count ?? 0, coverage: d?.coverage ?? "" });
+        })
+        .catch(() => { /* leave whatever is already drawn */ });
+    };
+    let timer: number | undefined;
+    const schedule = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(load, 350);
+    };
+    load();
+    map.on("idle", schedule);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+      map.off("idle", schedule);
+    };
+  }, [overlays.vote2026, ready, styleEpoch]);
+
+  // ── 2026 location hover ──────────────────────────────────────────────
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    const enter = (e: maplibregl.MapLayerMouseEvent) => {
+      const f = e.features?.[0];
+      if (!f) return;
+      map.getCanvas().style.cursor = "pointer";
+      const p = (f.properties || {}) as Record<string, string>;
+      setVote26Tip({
+        x: e.point.x, y: e.point.y,
+        name: p.name || "Voting location",
+        address: p.address || "",
+        hours: p.hours || null,
+        kind: p.kind || "",
+        state: p.state || "",
+        notes: p.notes || null,
+        start: p.start_date || null,
+        end: p.end_date || null,
+      });
+    };
+    const leave = () => { map.getCanvas().style.cursor = ""; setVote26Tip(null); };
+    map.on("mousemove", "vote26-dot", enter);
+    map.on("mouseleave", "vote26-dot", leave);
+    return () => {
+      map.off("mousemove", "vote26-dot", enter);
+      map.off("mouseleave", "vote26-dot", leave);
+    };
+  }, [ready]);
 
   // ── polling place hover and click ────────────────────────────────────
   useEffect(() => {
@@ -2394,6 +2523,53 @@ export default function USElectionPage({
         </div>
       )}
 
+      {/* 2026 voting location readout. No aerial image: these are live
+          civic instructions and a stale satellite tile adds nothing to
+          "where do I vote" while costing a request. */}
+      {vote26Tip && (
+        <div
+          className="pointer-events-none absolute z-30 hidden w-[18rem] overflow-hidden rounded-lg border border-violet-500/50 bg-white/95 shadow-lg backdrop-blur md:block dark:bg-slate-900/95"
+          style={{
+            left: Math.min(vote26Tip.x + 14, (containerRef.current?.clientWidth ?? 0) - 310),
+            top: Math.max(8, vote26Tip.y - 10),
+          }}
+        >
+          <div className="border-b border-violet-500/25 bg-violet-500/10 px-2.5 py-1 font-mono text-[9px] uppercase tracking-[0.16em] text-violet-700 dark:text-violet-300">
+            {VOTE26_KIND_LABEL[vote26Tip.kind] ?? vote26Tip.kind}
+          </div>
+          <div className="px-2.5 py-2">
+            <div className="text-xs font-semibold text-slate-900 dark:text-white">
+              {vote26Tip.name}
+            </div>
+            {vote26Tip.address && (
+              <div className="mt-0.5 text-[10px] leading-snug text-slate-600 dark:text-slate-300">
+                {vote26Tip.address}
+              </div>
+            )}
+            {/* Hours arrive as multi-line strings — a fortnight of early
+                voting is a line per day. Collapsing them to one line would
+                make a schedule unreadable, so the breaks are preserved. */}
+            {vote26Tip.hours && (
+              <div className="mt-1.5 max-h-28 overflow-y-auto whitespace-pre-line rounded bg-slate-100 px-1.5 py-1 font-mono text-[9px] leading-relaxed text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                {vote26Tip.hours}
+              </div>
+            )}
+            {(vote26Tip.start || vote26Tip.end) && (
+              <div className="mt-1 text-[10px] text-slate-500">
+                {vote26Tip.start ?? "?"} → {vote26Tip.end ?? "?"}
+              </div>
+            )}
+            {vote26Tip.notes && (
+              <div className="mt-1 text-[10px] italic text-slate-500">{vote26Tip.notes}</div>
+            )}
+            <div className="mt-1.5 text-[9px] leading-relaxed text-slate-400">
+              From {vote26Tip.state}&rsquo;s own election feed. Always confirm with
+              the state&rsquo;s official lookup before you travel.
+            </div>
+          </div>
+        </div>
+      )}
+
       {newsTip && (
         <div
           className="pointer-events-none absolute z-30 hidden max-w-[19rem] rounded-lg border border-amber-500/40 bg-white/95 px-2.5 py-2 shadow-lg backdrop-blur md:block dark:bg-slate-900/95"
@@ -2568,6 +2744,41 @@ export default function USElectionPage({
               {yearCounts.get(year ?? 0) ?? 0}
             </span>
           </span>
+        </div>
+      )}
+
+      {/* Coverage for the 2026 layer. An empty map is the single most
+          dangerous thing this overlay can show: read as an answer it says
+          "there is nowhere to vote near you", when it means "your state has
+          not published its feed yet". So absence is always captioned. */}
+      {overlays.vote2026 && ready && (
+        <div className="pointer-events-none absolute bottom-[5.5rem] left-3 z-20 max-w-[19rem] rounded-lg border border-violet-500/40 bg-white/92 px-3 py-2 text-[10px] shadow-lg backdrop-blur dark:border-violet-400/30 dark:bg-slate-900/92">
+          <div className="mb-1 flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.16em] text-violet-700 dark:text-violet-300">
+            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none"
+                 stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+                 strokeLinejoin="round" aria-hidden>
+              <path d="M21 10c0 6-9 12-9 12s-9-6-9-12a9 9 0 0 1 18 0Z" />
+              <circle cx="12" cy="10" r="3" />
+            </svg>
+            Vote here · 2026
+          </div>
+          {zoom < VOTE26_MIN_ZOOM ? (
+            <p className="leading-relaxed text-slate-600 dark:text-slate-300">
+              Zoom in to see published voting locations.
+            </p>
+          ) : vote26 && vote26.count === 0 ? (
+            <p className="leading-relaxed text-slate-600 dark:text-slate-300">
+              No 2026 locations published for this area yet — only Virginia&rsquo;s
+              feed is live so far. This does <b>not</b> mean there are no polling
+              places here. Use your state&rsquo;s official lookup, linked under
+              Voter info.
+            </p>
+          ) : (
+            <p className="leading-relaxed text-slate-600 dark:text-slate-300">
+              {vote26?.coverage
+                ?? "Sampled from the states' own feeds; not a survey of every location."}
+            </p>
+          )}
         </div>
       )}
 
