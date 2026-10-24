@@ -132,6 +132,39 @@ interface MarginRow {
  * server returns at most one candidate per party: it keeps the join exact,
  * and a share can never contradict the margin pill sitting next to it.
  */
+/** The contest happening now, as /race-2026 returns it per division. */
+interface RaceIncumbent {
+  name: string;
+  party: string;
+  photo?: string | null;
+  bioguide?: string | null;
+  /** true defending · false positively out · null unknown — never "not running". */
+  running: boolean | null;
+  roster_status?: string[] | null;
+}
+interface RaceSeat {
+  senate_class: number | null;
+  next_election: string | null;
+  seat_up: boolean;
+  incumbent: RaceIncumbent;
+}
+interface Race2026 {
+  ocd_id: string;
+  office: string | null;
+  state: string | null;
+  seat_up: boolean;
+  open_seat: boolean;
+  open_seat_source: string | null;
+  incumbent: RaceIncumbent | null;
+  challengers: number;
+  top_challenger: {
+    name: string; party: string; photo?: string | null;
+    receipts: number; roster_status?: string[] | null;
+  } | null;
+  seats: RaceSeat[];
+  roster_source: string | null;
+}
+
 interface TopCandidate {
   name: string;
   party: string;
@@ -321,6 +354,10 @@ export default function USElectionPage({
   // beside them come from `margins`; see TopCandidate.
   const [topCandidates, setTopCandidates] =
     useState<Map<string, TopCandidate[]>>(new Map());
+  // The 2026 contest per division. Separate from `topCandidates`, which is
+  // the historical cut the scrubber selects: ten days out a reader wants to
+  // know what is on the ballot NOW, and the two must never be confused.
+  const [race2026, setRace2026] = useState<Map<string, Race2026>>(new Map());
   const [rows, setRows] = useState<Row[]>([]);
   const [selected, setSelected] = useState<Row | null>(null);
   const [detail, setDetail] = useState<Row | null>(null);
@@ -401,7 +438,7 @@ export default function USElectionPage({
   const playRef = useRef<number | null>(null);
   const [hoverInfo, setHoverInfo] = useState<
     { x: number; y: number; row: Row; total?: number; majorShare?: number;
-      top?: TopCandidate[] } | null>(null);
+      top?: TopCandidate[]; race?: Race2026 } | null>(null);
   const [newsTip, setNewsTip] = useState<{
     x: number; y: number; name: string; articles: number;
     people: string; tilt: number | null; headline: string;
@@ -515,6 +552,8 @@ export default function USElectionPage({
   useEffect(() => { holdersRef.current = holders; }, [holders]);
   const topCandidatesRef = useRef(topCandidates);
   useEffect(() => { topCandidatesRef.current = topCandidates; }, [topCandidates]);
+  const race2026Ref = useRef(race2026);
+  useEffect(() => { race2026Ref.current = race2026; }, [race2026]);
   // Only call a seat vacant when the officeholder feed actually loaded for
   // this office — otherwise "no holder" just means "not fetched".
   const hasHolderData = office === "us_house" || office === "us_senate";
@@ -1775,6 +1814,38 @@ export default function USElectionPage({
     return () => { alive = false; };
   }, [level, office, year, ready]);
 
+  // ── what is on the ballot now ────────────────────────────────────────────
+  //
+  // Keyed on office only — the current race does not move with the timeline,
+  // so scrubbing back to 2008 must not change it. Cached per office; failure
+  // is silent and the hover simply omits the block rather than guessing.
+  const raceCacheRef = useRef<Map<string, Race2026[]>>(new Map());
+  useEffect(() => {
+    if (!ready) return;
+    // Only the two federal chambers have an officeholder feed to derive a
+    // seat from; president and governor would render an empty block.
+    if (office !== "us_house" && office !== "us_senate") {
+      setRace2026(new Map());
+      return;
+    }
+    const apply = (list: Race2026[]) =>
+      setRace2026(new Map(list.map((r) => [r.ocd_id, r])));
+    const hit = raceCacheRef.current.get(office);
+    if (hit) { apply(hit); return; }
+
+    let alive = true;
+    apiService({ method: "get", url: `/us-election/race-2026?office=${office}` })
+      .then((r) => {
+        if (!alive) return;
+        const list = (r as { data?: { data?: { rows?: Race2026[] } } })
+          ?.data?.data?.rows ?? [];
+        raceCacheRef.current.set(office, list);
+        apply(list);
+      })
+      .catch(() => { if (alive) setRace2026(new Map()); });
+    return () => { alive = false; };
+  }, [office, ready]);
+
   // ── fetch margins and push them in as feature state ──────────────────────
   useEffect(() => {
     const map = mapRef.current;
@@ -1871,6 +1942,7 @@ export default function USElectionPage({
         total: m?.total,
         majorShare: m?.major_share,
         top: topCandidatesRef.current.get(id),
+        race: race2026Ref.current.get(id),
       });
       if (hoverRef.current === id) return;
       clear();
@@ -2479,6 +2551,126 @@ export default function USElectionPage({
             )}
           </div>
 
+          {/* ── THE RACE HAPPENING NOW ──────────────────────────────────
+              Deliberately first and visually separate. Everything below it
+              describes a past election; this describes the ballot. Ten days
+              out, conflating the two would be the single most misleading
+              thing this tooltip could do. */}
+          {hoverInfo.race && (
+            <>
+              <div className="mx-3 border-t border-white/5" />
+              <div className="bg-amber-500/[0.06] px-3 py-2">
+                {hoverInfo.race.seat_up ? (
+                  <>
+                    <div className="mb-1.5 flex items-center gap-1.5 font-mono text-[9px] font-bold tracking-[0.12em] text-amber-300">
+                      <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" />
+                      {hoverInfo.race.open_seat ? "OPEN SEAT · ON THE 2026 BALLOT" : "ON THE 2026 BALLOT"}
+                    </div>
+
+                    {/* who holds it, and are they defending it */}
+                    {hoverInfo.race.incumbent && (
+                      <div className="flex items-center gap-2">
+                        <Portrait
+                          src={hoverInfo.race.incumbent.photo}
+                          name={hoverInfo.race.incumbent.name}
+                          party={hoverInfo.race.incumbent.party}
+                          size={22}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-mono text-[11px] font-medium text-slate-200">
+                            {hoverInfo.race.incumbent.name}
+                            <span className={`ml-1.5 font-bold ${
+                              hoverInfo.race.incumbent.party === "DEM" ? "text-blue-400"
+                                : hoverInfo.race.incumbent.party === "REP" ? "text-red-400"
+                                  : "text-slate-400"
+                            }`}>
+                              {hoverInfo.race.incumbent.party === "DEM" ? "D"
+                                : hoverInfo.race.incumbent.party === "REP" ? "R"
+                                  : hoverInfo.race.incumbent.party?.charAt(0)}
+                            </span>
+                          </div>
+                          {/* Three-valued, and the third value is not a shrug:
+                              an incumbent missing from the filings is unknown,
+                              never "not running". */}
+                          <div className="font-mono text-[9px] text-slate-500">
+                            {hoverInfo.race.incumbent.running === true
+                              ? <span className="text-emerald-400">defending this seat</span>
+                              : hoverInfo.race.incumbent.running === false
+                                ? (
+                                  <span className="text-amber-400">
+                                    {hoverInfo.race.incumbent.roster_status?.[0] ?? "not running"}
+                                  </span>
+                                )
+                                : <span className="text-slate-500">defending — not confirmed</span>}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* the field coming for it */}
+                    {hoverInfo.race.top_challenger && (
+                      <div className="mt-1.5 flex items-center gap-2 border-t border-amber-500/10 pt-1.5">
+                        <Portrait
+                          src={hoverInfo.race.top_challenger.photo}
+                          name={hoverInfo.race.top_challenger.name}
+                          party={hoverInfo.race.top_challenger.party}
+                          size={18}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-mono text-[10px] text-slate-300">
+                            {hoverInfo.race.top_challenger.name}
+                            <span className={`ml-1.5 font-bold ${
+                              hoverInfo.race.top_challenger.party === "DEM" ? "text-blue-400"
+                                : hoverInfo.race.top_challenger.party === "REP" ? "text-red-400"
+                                  : "text-slate-400"
+                            }`}>
+                              {hoverInfo.race.top_challenger.party === "DEM" ? "D"
+                                : hoverInfo.race.top_challenger.party === "REP" ? "R"
+                                  : hoverInfo.race.top_challenger.party?.charAt(0)}
+                            </span>
+                            {/* Knocked out but still in the FEC filings. */}
+                            {hoverInfo.race.top_challenger.roster_status?.length ? (
+                              <span className="ml-1.5 text-amber-400/80">
+                                {hoverInfo.race.top_challenger.roster_status[0]}
+                              </span>
+                            ) : null}
+                          </div>
+                          {/* Money raised is money raised. It is the only
+                              comparable signal the bulk filings carry, and it
+                              is not a prediction of who wins. */}
+                          <div className="font-mono text-[9px] text-slate-500">
+                            {moneyLabel(hoverInfo.race.top_challenger.receipts)} raised
+                            {hoverInfo.race.challengers > 1 && (
+                              <span className="text-slate-600">
+                                {" "}· {hoverInfo.race.challengers} filed
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  // Two thirds of Senate seats are not up in any given cycle,
+                  // and saying so is useful rather than empty.
+                  <div className="font-mono text-[9px] text-slate-500">
+                    <span className="tracking-[0.12em] text-slate-400">NOT ON THE 2026 BALLOT</span>
+                    {hoverInfo.race.seats.length > 0 && (
+                      <span className="ml-1.5">
+                        · next{" "}
+                        {hoverInfo.race.seats
+                          .map((st) => st.next_election?.slice(0, 4))
+                          .filter(Boolean)
+                          .sort()
+                          .join(", ")}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
           {/* turnout */}
           {hoverInfo.total != null && hoverInfo.total > 0 && (
             <>
@@ -2547,8 +2739,13 @@ export default function USElectionPage({
             </>
           ) : null}
 
-          {/* incumbents */}
-          {hoverInfo.row.holders?.length ? (
+          {/* Sitting members, only where the current-race block above did not
+              already name one. Both read from the officeholder feed, so on a
+              House or Senate hover they would otherwise print the same person
+              twice — once as "defending this seat" and again as "INCUMBENT".
+              The block below stays for the cuts the race endpoint does not
+              cover. */}
+          {!hoverInfo.race?.incumbent && hoverInfo.row.holders?.length ? (
             <>
               <div className="mx-3 border-t border-white/5" />
               <div className="space-y-1 px-3 py-2">

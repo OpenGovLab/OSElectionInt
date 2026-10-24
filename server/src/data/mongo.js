@@ -125,6 +125,182 @@ async function officeholders({ office, state, upBy }) {
   }).lean();
 }
 
+/**
+ * The race happening NOW, for every division at once.
+ *
+ * The hover had only ever been able to answer "how did this place vote in
+ * 2024". Ten days out from an election that is the less useful half; a
+ * reader wants to know whether this seat is on the ballot, who is defending
+ * it, and who is coming for it. This is the bulk cut that makes that cost
+ * nothing per mouse-move, keyed the same way margins and topCandidates are.
+ *
+ * ── A Senate state holds TWO seats at one ocd_id ─────────────────────────
+ * Texas carries Cornyn (class 2, up 2026) and Cruz (class 1, up 2030) under
+ * ocd-division/country:us/state:tx. "One row per division" therefore cannot
+ * mean "one seat": collapsing them would either hide Cruz or put him in a
+ * race he is not running. So a row describes the DIVISION and carries a
+ * `seats` array describing each seat under it — one entry for a House
+ * district, two for a Senate state — and the top-level fields summarise the
+ * seat that is actually up this cycle.
+ *
+ * ── "running" is three-valued on purpose ─────────────────────────────────
+ * true  — the incumbent appears among this cycle's filings (bioguide first,
+ *         FEC id as fallback; 641 of 668 incumbent filings carry a bioguide
+ *         and 537 of 539 holders carry fec_ids, so the pair covers nearly
+ *         everyone).
+ * false — ONLY when the roster explicitly says retiring / withdrew / lost
+ *         primary. That is a positive statement that they are out.
+ * null  — anything else. An incumbent missing from our candidate table is
+ *         not evidence of retirement, it is evidence of a gap in our table,
+ *         and rendering that as "not running" would invent a retirement.
+ */
+async function race2026({ office, level }) {
+  const CYCLE = 2026;
+  const holderQ = office ? { office } : {};
+  const candQ = { cycle: CYCLE };
+  if (office) candQ.office = office;
+
+  const [holders, cands, rosters] = await Promise.all([
+    M(TABLES.officeholders).find(holderQ, {
+      _id: 0, ocd_id: 1, office: 1, state: 1, district: 1, name: 1, party: 1,
+      next_election: 1, senate_class: 1, photo: 1, bioguide: 1, fec_ids: 1,
+    }).lean(),
+    M(TABLES.candidates).find(candQ, {
+      _id: 0, ocd_id: 1, office: 1, state: 1, district: 1, name: 1, party: 1,
+      status: 1, receipts: 1, photo: 1, bioguide: 1, fec_id: 1,
+      election_yr: 1,
+    }).lean(),
+    M(TABLES.raceRoster).find({ cycle: CYCLE }).lean().catch(() => []),
+  ]);
+
+  // election_yr is certified and is the only thing that knows Cruz's 2026
+  // committee is raising for 2030. Absent means "no reason to exclude".
+  const live = cands.filter((c) => c.election_yr == null || c.election_yr === CYCLE);
+
+  const byDivision = new Map();
+  for (const c of live) {
+    if (!c.ocd_id) continue;
+    if (!byDivision.has(c.ocd_id)) byDivision.set(c.ocd_id, []);
+    byDivision.get(c.ocd_id).push(c);
+  }
+
+  // Roster flags, keyed per state. Only the Senate roster exists (34 states),
+  // so a House row simply finds nothing here — which is absence of a claim,
+  // not a claim of absence.
+  const rosterByState = new Map();
+  for (const r of rosters) if (r.state) rosterByState.set(r.state, r);
+  const OUT_FLAGS = new Set(["retiring", "withdrew", "lost primary"]);
+  const nameKey = (n) => String(n || "").toLowerCase().replace(/[^a-z]/g, "");
+  const flagsFor = (roster, name) => {
+    if (!roster) return null;
+    const want = nameKey(name);
+    for (const r of roster.candidates ?? []) {
+      if (nameKey(r.name) === want) return r.status_flags ?? [];
+    }
+    // Surname fallback, used only when it resolves to exactly one entry —
+    // the FEC writes "John Sen Cornyn" where the roster writes "John Cornyn".
+    const sur = String(name || "").trim().split(/\s+/).pop()?.toLowerCase();
+    if (!sur) return null;
+    const hits = (roster.candidates ?? [])
+      .filter((r) => nameKey(r.name).endsWith(sur));
+    return hits.length === 1 ? hits[0].status_flags ?? [] : null;
+  };
+
+  const holdersByDivision = new Map();
+  for (const h of holders) {
+    if (!h.ocd_id) continue;
+    if (!holdersByDivision.has(h.ocd_id)) holdersByDivision.set(h.ocd_id, []);
+    holdersByDivision.get(h.ocd_id).push(h);
+  }
+
+  const rows = [];
+  const divisions = new Set([...holdersByDivision.keys(), ...byDivision.keys()]);
+  for (const ocdId of divisions) {
+    if (level === "cd" && !ocdId.includes("/cd:")) continue;
+    if (level === "state" && ocdId.includes("/cd:")) continue;
+
+    const divHolders = holdersByDivision.get(ocdId) ?? [];
+    const divCands = byDivision.get(ocdId) ?? [];
+    const state = divHolders[0]?.state ?? divCands[0]?.state ?? null;
+    const roster = state ? rosterByState.get(state) : null;
+
+    const fecOf = new Set(divCands.map((c) => c.fec_id).filter(Boolean));
+    const bioOf = new Set(divCands.map((c) => c.bioguide).filter(Boolean));
+
+    const seats = divHolders.map((h) => {
+      const up = String(h.next_election || "").startsWith(String(CYCLE));
+      const flags = flagsFor(roster, h.name);
+      const matched = (h.bioguide && bioOf.has(h.bioguide))
+        || (h.fec_ids ?? []).some((f) => fecOf.has(f));
+      const isOut = Array.isArray(flags) && flags.some((f) => OUT_FLAGS.has(f));
+      // An explicit "retiring" outranks a filing match, not the other way
+      // round. A departing member keeps a committee open to wind it down and
+      // transfer funds, so filings persist long after they stop being a
+      // candidate: McConnell, Durbin, Tuberville and Ernst all still match on
+      // FEC id while the roster says they are retiring. Letting the match win
+      // reported four of the cycle's genuinely open Senate races as incumbent
+      // defences, which is the opposite of the truth.
+      const running = isOut ? false : matched ? true : null;
+      return {
+        senate_class: h.senate_class ?? null,
+        next_election: h.next_election ?? null,
+        seat_up: up,
+        incumbent: {
+          name: h.name, party: h.party, photo: h.photo ?? null,
+          bioguide: h.bioguide ?? null,
+          running,
+          roster_status: Array.isArray(flags) && flags.length ? flags : null,
+        },
+      };
+    });
+
+    // The seat actually being contested this cycle leads the row.
+    const upSeat = seats.find((s) => s.seat_up) ?? null;
+    const challengers = divCands.filter((c) => c.status !== "incumbent");
+    const top = challengers
+      .slice()
+      .sort((a, b) => (b.receipts ?? 0) - (a.receipts ?? 0))[0] ?? null;
+
+    // Two independent positive signals that nobody is defending this seat.
+    // The roster saying "retiring" is one. The other is the FEC's own
+    // classification: where it has filings here and marks every one of them
+    // "open seat" with no incumbent among them, that is the FEC stating the
+    // race has no incumbent — sparse (2 House districts carry it) but a
+    // claim rather than a silence. A division we simply hold no holder for
+    // stays unknown, because absence of a record is not an open seat.
+    const incumbentFilings = divCands.filter((c) => c.status === "incumbent");
+    const fecSaysOpen = divCands.length > 0
+      && incumbentFilings.length === 0
+      && divCands.some((c) => c.status === "open seat");
+
+    rows.push({
+      ocd_id: ocdId,
+      office: office ?? divHolders[0]?.office ?? divCands[0]?.office ?? null,
+      state,
+      district: divHolders[0]?.district ?? divCands[0]?.district ?? null,
+      seat_up: seats.some((s) => s.seat_up) || (!seats.length && !!divCands.length),
+      open_seat: (!!upSeat && upSeat.incumbent.running === false) || fecSaysOpen,
+      open_seat_source: (!!upSeat && upSeat.incumbent.running === false)
+        ? "roster" : fecSaysOpen ? "fec" : null,
+      incumbent: upSeat ? upSeat.incumbent : null,
+      challengers: challengers.length,
+      top_challenger: top
+        ? {
+          name: top.name, party: top.party, photo: top.photo ?? null,
+          receipts: top.receipts ?? 0, fec_id: top.fec_id ?? null,
+          roster_status: (() => {
+            const f = flagsFor(roster, top.name);
+            return Array.isArray(f) && f.length ? f : null;
+          })(),
+        }
+        : null,
+      seats,
+      roster_source: roster?.source ?? null,
+    });
+  }
+  return rows;
+}
+
 async function division(ocdId, limit) {
   const [div, history, holders, candidates, pastCandidates] = await Promise.all([
     // .collection bypasses Mongoose casting: these documents use the OCD id
@@ -1042,6 +1218,7 @@ module.exports = {
   latestCandidateYear,
   topCandidates,
   officeholders,
+  race2026,
   division,
   divisionPoints,
   candidateByFec,

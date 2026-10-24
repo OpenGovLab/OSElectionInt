@@ -6,6 +6,7 @@ const {
   getYears,
   getDivision,
   getOfficeholders,
+  getRace2026,
   chat,
   getCandidate,
   searchPeople,
@@ -56,6 +57,8 @@ router.get("/voter-info", longCache, getVoterInfo);
 router.get("/polling-points", longCache, getPollingPoints);
 router.get("/place-photo", longCache, getPlacePhoto);
 router.get("/place-photo/image", getPlacePhotoImage);
+// What is on the ballot this cycle, per division, in one call.
+router.get("/race-2026", longCache, getRace2026);
 router.get("/officeholders", longCache, getOfficeholders);
 router.get("/candidate", longCache, getCandidate);
 router.get("/races", longCache, getRacePoints);

@@ -151,6 +151,50 @@ exports.getYears = async (req, res) => {
  * `up_by` filters to seats facing voters on or before a date, which is how the
  * client asks "what is on the ballot this cycle".
  */
+/**
+ * GET /api/us-election/race-2026?office=&level=
+ *
+ * What is on the ballot now, for every division in one call, so a hover can
+ * say "this seat is up, here is who is defending it" without a request per
+ * mouse-move.
+ */
+exports.getRace2026 = async (req, res) => {
+  try {
+    const office = req.query.office ? String(req.query.office) : undefined;
+    if (office && !OFFICES.includes(office)) {
+      return res.status(400).json({
+        success: false, message: `office must be one of ${OFFICES}`,
+      });
+    }
+    const level = req.query.level ? String(req.query.level) : undefined;
+    if (level && !LEVELS.includes(level)) {
+      return res.status(400).json({
+        success: false, message: `level must be one of ${LEVELS}`,
+      });
+    }
+    const rows = await repo.race2026({ office, level });
+    res.json({
+      success: true,
+      data: {
+        cycle: 2026,
+        election_day: "2026-11-03",
+        office: office ?? null,
+        count: rows.length,
+        rows,
+        caveat: "Seats up are derived from each officeholder's next election "
+          + "date. Whether an incumbent is defending comes from this cycle's "
+          + "FEC filings, and 'not running' is only asserted where a roster "
+          + "compiled by OnTheIssues.org says retiring, withdrew or lost "
+          + "primary — an incumbent missing from the filings is reported as "
+          + "unknown, not as retiring. Money raised is money raised; it is "
+          + "not a prediction.",
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 exports.getOfficeholders = async (req, res) => {
   try {
     const { office, state, up_by: upBy } = req.query;

@@ -64,6 +64,20 @@
  * @property {(a: {level:string}) => Promise<Object>} divisionPoints
  *   GeoJSON FeatureCollection of label centroids.
  *
+ * @property {(a: {office?:string, level?:string}) => Promise<Array<{
+ *   ocd_id:string, office:string|null, state:string|null, seat_up:boolean,
+ *   open_seat:boolean, challengers:number,
+ *   incumbent:{name,party,photo,bioguide,running:boolean|null,
+ *              roster_status:string[]|null}|null,
+ *   top_challenger:{name,party,photo,receipts}|null,
+ *   seats:Array<{senate_class,next_election,seat_up,incumbent}>
+ * }>>} race2026
+ *   The contest happening now, per division. A Senate state holds two seats
+ *   at one ocd id, so a row describes the DIVISION and `seats` describes each
+ *   seat beneath it. `running` is three-valued: false only where the roster
+ *   positively says retiring/withdrew/lost primary, null where we do not
+ *   know. Absence from our candidate table is not evidence of retirement.
+ *
  * @property {(a: {office:string}) => Promise<Array>} officeholders
  *
  * @property {(fecId:string) => Promise<{ candidate:Object|null,
