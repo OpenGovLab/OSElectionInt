@@ -3,3 +3,4 @@ dist/
 .env
 *.tsbuildinfo
 __pycache__/
+.ie_raw/

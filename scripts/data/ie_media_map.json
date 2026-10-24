@@ -1,0 +1,99 @@
+{
+  "_comment": [
+    "Maps the FEC's free-text `pur` (purpose) field on a Schedule E row to a",
+    "medium. This lives in a data file rather than inline regexes because it is",
+    "an editorial judgement about what a filer meant, and it will be argued",
+    "with: filers write whatever they like, and 93 distinct purpose strings",
+    "appeared in a 500-row sample alone.",
+    "",
+    "THE DISTINCTION THAT MATTERS: much of Schedule E is not advertising at",
+    "all. 'IE- CRUZ - DONATION PROCESSING', 'BANK CHARGES AND FEES' and",
+    "'STAFF TIME - IE DEBT PAYMENT' are overhead; 'CANVASSING' and",
+    "'PHONEBANKING' are field organising. Folding those into an advertising",
+    "total would overstate how much was spent on the messages a voter saw,",
+    "which is the entire question this dataset exists to answer. `is_ad`",
+    "marks the buckets that represent a placed message.",
+    "",
+    "'MEDIA PLACEMENT' with no medium named is genuinely ambiguous — it is",
+    "commonly TV but not reliably so — and goes to media_unspecified rather",
+    "than being guessed into tv. Anything unmatched stays `unclassified` and",
+    "is counted, never forced."
+  ],
+  "buckets": {
+    "digital": {
+      "is_ad": true,
+      "label": "Digital",
+      "match": ["digital", "online", "internet", "web ad", "website", "banner",
+                "social media", "facebook", "meta ", "instagram", "google ad",
+                "youtube", "programmatic", "ctv", " ott", "streaming",
+                "display ad", "search ad", "email", "text message", "sms",
+                "peer to peer", "p2p"]
+    },
+    "tv": {
+      "is_ad": true,
+      "label": "Television",
+      "match": ["tv ", " tv", "television", "broadcast", "cable", "satellite ad"]
+    },
+    "radio": {
+      "is_ad": true,
+      "label": "Radio",
+      "match": ["radio"]
+    },
+    "print": {
+      "is_ad": true,
+      "label": "Print",
+      "match": ["newspaper", "print ad", "magazine", "billboard", "outdoor ad",
+                "signage", "yard sign", "poster"]
+    },
+    "mail": {
+      "is_ad": true,
+      "label": "Direct mail",
+      "match": ["mailer", "direct mail", "mail piece", "postage", "postal",
+                "literature", "printing/shipping", "printing / postage",
+                "printing and postage", "door hanger", "palm card"]
+    },
+    "media_unspecified": {
+      "is_ad": true,
+      "label": "Media placement (medium not stated)",
+      "match": ["media placement", "media buy", "ad buy", "advertising",
+                "advertisement", "media services", "airtime", "air time"]
+    },
+    "production": {
+      "is_ad": false,
+      "label": "Production and creative",
+      "match": ["production", "creative", "video editing", "voiceover",
+                "photography", "graphic design", "script"]
+    },
+    "research": {
+      "is_ad": false,
+      "label": "Research and polling",
+      "match": ["poll", "survey", "research", "focus group", "data analytics",
+                "opposition research"]
+    },
+    "canvassing": {
+      "is_ad": false,
+      "label": "Canvassing and phones",
+      "match": ["canvass", "phonebank", "phone bank", "field organiz",
+                "field organis", "door to door", "door-to-door", "gotv",
+                "get out the vote", "voter contact", "literature drop"]
+    },
+    "overhead": {
+      "is_ad": false,
+      "label": "Overhead and fees",
+      "match": ["donation processing", "bank charge", "bank fee", "merchant fee",
+                "processing fee", "staff time", "payroll", "consulting fee",
+                "legal", "compliance", "accounting", "debt payment",
+                "reimbursement", "rent", "software", "subscription"]
+    }
+  },
+  "unclassified_bucket": "unclassified",
+  "notes": [
+    "Matching is substring, case-insensitive, first bucket in declaration",
+    "order wins. Order therefore matters: 'digital advertising' must hit",
+    "digital before the broader 'advertising' in media_unspecified, so",
+    "digital is declared first.",
+    "",
+    "Buckets with is_ad=false must never be summed into an 'advertising",
+    "spend' figure."
+  ]
+}
