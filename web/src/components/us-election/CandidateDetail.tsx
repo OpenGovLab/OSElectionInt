@@ -4,6 +4,7 @@ import { apiService } from "@/lib/api";
 import PersonLinks, { type Social } from "./PersonLinks";
 import PersonPositions from "./PersonPositions";
 import Portrait from "./Portrait";
+import AdSpend from "@/components/us-election/AdSpend";
 
 /**
  * One candidate — incumbent or challenger.
@@ -138,6 +139,11 @@ export default function CandidateDetail({
             onto the ballot.
           </p>
         </section>
+
+        {/* The other half of the money story: what others spend to defeat
+            them. Placed directly under their own fundraising so the two read
+            against each other. */}
+        <AdSpend fecId={c.fec_id ?? fecId ?? null} />
 
         <section>
           <h3 className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">

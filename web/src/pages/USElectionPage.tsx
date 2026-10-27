@@ -51,6 +51,7 @@ import NewsRail, { type NewsArticle }
   from "@/components/us-election/NewsRail";
 import PersonDetail from "@/components/us-election/PersonDetail";
 import IssueExplorer from "@/components/us-election/IssueExplorer";
+import SpendLeaderboard from "@/components/us-election/SpendLeaderboard";
 import {
   STANCE_SOURCE,
   STANCE_MIN_ZOOM,
@@ -365,6 +366,7 @@ export default function USElectionPage({
   const [chatOpen, setChatOpen] = useState(false);
   // The issue explorer takes over the panel, like chat does.
   const [issuesOpen, setIssuesOpen] = useState(false);
+  const [spendOpen, setSpendOpen] = useState(false);
   // Overlay visibility, keyed by the registry rather than one boolean per
   // layer. Adding the news layer is a registry entry plus a data effect.
   const [overlays, setOverlays] = useState<Record<OverlayId, boolean>>(
@@ -2488,6 +2490,17 @@ export default function USElectionPage({
                 <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
               </svg>
             </button>
+            <button
+              onClick={() => { setSpendOpen(true); setSheetOpen(true); }}
+              title="Outside spending — who is spending to defeat each candidate"
+              className={tbtn(spendOpen)}
+            >
+              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none"
+                   stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+                   strokeLinejoin="round">
+                <path d="M12 2v20M17 6.5c-1.2-1-3-1.5-5-1.5-2.8 0-5 1.1-5 3s2.2 2.6 5 3 5 1.1 5 3-2.2 3-5 3c-2 0-3.8-.5-5-1.5" />
+              </svg>
+            </button>
           </div>
 
           <div className="mx-2 border-t border-white/5" />
@@ -3208,7 +3221,7 @@ export default function USElectionPage({
       <div className={`absolute z-20 flex flex-col overflow-hidden border-black/10 bg-white/95 shadow-2xl backdrop-blur dark:border-white/10 dark:bg-slate-900/95
         inset-x-0 bottom-0 rounded-t-2xl border-t transition-[max-height] duration-300
         md:bottom-8 md:top-11 md:right-3 md:left-auto md:w-[22rem] md:rounded-xl md:border
-        ${chatOpen || issuesOpen ? "max-h-[88%] md:max-h-none"
+        ${chatOpen || issuesOpen || spendOpen ? "max-h-[88%] md:max-h-none"
           : sheetOpen ? "max-h-[55%] md:max-h-none"
             : "max-h-14 md:max-h-none"}`}>
         {cand ? (
@@ -3265,6 +3278,14 @@ export default function USElectionPage({
               ))}
             </div>
           </div>
+        ) : spendOpen ? (
+          <SpendLeaderboard
+            onBack={() => setSpendOpen(false)}
+            onOpen={(fecId, name) => {
+              setSpendOpen(false);
+              setCand({ fecId, name });
+            }}
+          />
         ) : issuesOpen ? (
           <IssueExplorer
             state={detail?.state ?? selected?.state ?? null}

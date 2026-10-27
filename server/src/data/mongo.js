@@ -1150,6 +1150,139 @@ async function voterInfo(state) {
   return M(TABLES.voterInfo).collection.findOne({ _id: state });
 }
 
+/**
+ * Outside spending for and against one candidate.
+ *
+ * SPENDING, not advertising creative. The FEC reports an amount, a payer, a
+ * payee and a free-text purpose; it never reports what the message said. A
+ * caller must not present this as "the ads" — we cannot show a single one.
+ *
+ * Totals come from the rollup rather than re-summing line items, because the
+ * ingest already removed two things a naive sum would put back: 3,113 rows
+ * belonging to 600 superseded amendments ($186.2m — an amended FEC report
+ * REPLACES a filing rather than patching it, and the bulk file ships both),
+ * and 16 quarantined junk filings worth $38.5bn. The line items returned
+ * here are for display only and exclude supersessions for the same reason.
+ */
+async function adSpend({ fecId, limit }) {
+  const rollup = await M(TABLES.ieRollup)
+    .findOne({ candidate_id: String(fecId) }, { _id: 0 }).lean();
+  if (!rollup) return null;
+
+  const items = await M(TABLES.ieLineItems)
+    .find({ candidate_id: String(fecId), amendment: { $ne: "A" } },
+      { _id: 0, amount: 1, spender_name: 1, spender_id: 1, payee: 1,
+        purpose: 1, medium: 1, is_ad: 1, support_oppose: 1,
+        expenditure_date: 1, dissemination_date: 1, election_type: 1 })
+    .sort({ amount: -1 }).limit(limit).lean();
+
+  return { ...rollup, line_items: items };
+}
+
+/**
+ * Leaderboards — who is being spent against hardest.
+ *
+ * `ratio` sorting demands a support total to divide by, so rows with none are
+ * excluded from THAT sort only; a candidate with $5m against and nothing for
+ * has an undefined ratio, not an infinite one.
+ */
+async function adSpendTop({
+  office, state, sort, minTotal, minSupport, limit,
+}) {
+  const q = {};
+  if (office) q.office = office;
+  if (state) q.state = String(state).toUpperCase();
+
+  const key = sort === "support" ? "support_total"
+    : sort === "ratio" ? "ratio_against_for"
+      : "oppose_total";
+  // A ratio needs a real denominator as well as a real numerator. Gating only
+  // the opposed side still floated $2.5m-against/$1,050-for to the top at
+  // 2,381x, which measures the smallness of the denominator and nothing else.
+  if (sort === "ratio") {
+    q.ratio_against_for = { $ne: null };
+    q.support_total = { $gte: minSupport };
+  }
+  // minTotal always gates on DOLLARS opposed, never on the sort key. Gating a
+  // ratio sort by ratio is what made the leaderboard useless: a candidate with
+  // $2.5m against and $1,050 for scores 2,381x and outranks a $207m race. The
+  // ratio is only meaningful once the denominator is real, so the floor has to
+  // be an absolute amount.
+  if (Number.isFinite(minTotal)) q.oppose_total = { $gte: minTotal };
+
+  return M(TABLES.ieRollup)
+    .find(q, { _id: 0, line_items: 0 })
+    .sort({ [key]: -1 }).limit(limit).lean();
+}
+
+/**
+ * Per-division totals, so a map can shade by how much outside money a seat
+ * has attracted.
+ *
+ * The join is candidate_id -> us_candidates.fec_id, which is the same key on
+ * both sides. 73 of 819 candidates carrying outside spending are absent from
+ * us_candidates entirely — Troy Jackson of Maine has $62.8m spent against him
+ * and no candidate record at all — so dropping the unmatched would silently
+ * erase the single largest unreported race. Where the candidate table cannot
+ * supply an ocd id, one is derived from state and office and marked as such,
+ * and a row that can be placed neither way is still returned without one.
+ */
+async function adSpendMap({ office, cycle }) {
+  const q = { cycle };
+  if (office) q.office = office;
+  const rows = await M(TABLES.ieRollup)
+    .find(q, { _id: 0, candidate_id: 1, name: 1, party: 1, state: 1,
+      office: 1, district: 1, support_total: 1, oppose_total: 1,
+      ratio_against_for: 1, first_date: 1, last_date: 1 })
+    .lean();
+  if (!rows.length) return [];
+
+  const ids = rows.map((r) => r.candidate_id);
+  const cands = await M(TABLES.candidates)
+    .find({ fec_id: { $in: ids } }, { _id: 0, fec_id: 1, ocd_id: 1, photo: 1 })
+    .lean();
+  const byFec = new Map(cands.map((c) => [c.fec_id, c]));
+
+  // A House district is "00" for statewide offices and a zero-padded number
+  // otherwise; the OCD form drops the padding.
+  const derive = (r) => {
+    const st = String(r.state || "").toLowerCase();
+    if (!/^[a-z]{2}$/.test(st)) return null;
+    const base = `ocd-division/country:us/state:${st}`;
+    if (r.office === "us_senate" || r.office === "president") return base;
+    if (r.office === "us_house") {
+      const d = parseInt(r.district, 10);
+      if (!Number.isFinite(d)) return null;
+      return `${base}/cd:${d === 0 ? "1" : d}`;
+    }
+    return null;
+  };
+
+  return rows.map((r) => {
+    const hit = byFec.get(r.candidate_id);
+    const derived = hit?.ocd_id ? null : derive(r);
+    return {
+      candidate_id: r.candidate_id, name: r.name, party: r.party,
+      state: r.state, office: r.office, district: r.district,
+      support_total: r.support_total ?? 0,
+      oppose_total: r.oppose_total ?? 0,
+      ratio_against_for: r.ratio_against_for ?? null,
+      first_date: r.first_date ?? null, last_date: r.last_date ?? null,
+      photo: hit?.photo ?? null,
+      ocd_id: hit?.ocd_id ?? derived ?? null,
+      ocd_source: hit?.ocd_id ? "candidates" : derived ? "derived" : null,
+      in_candidate_table: !!hit,
+    };
+  });
+}
+
+/** Load/rollup provenance, so the client can state the window and the source. */
+async function adSpendMeta() {
+  const rows = await M(TABLES.ieMeta).find({}).lean().catch(() => []);
+  const byId = Object.fromEntries((rows || []).map((r) => [r._id, r]));
+  return { load: byId["load-2026"] ?? null, rollup: byId["rollup-2026"] ?? null };
+}
+
 async function capabilities() {
   const has = async (name) => {
     try {
@@ -1238,6 +1371,10 @@ module.exports = {
   stanceFilter,
   stanceClusters,
   stanceCoverage,
+  adSpend,
+  adSpendTop,
+  adSpendMap,
+  adSpendMeta,
   capabilities,
   stats,
 };

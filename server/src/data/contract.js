@@ -155,6 +155,9 @@ const TABLES = {
   raceRoster: "us_race_roster",
   polling2026: "us_polling_2026",
   issuePositions: "us_issue_positions",
+  ieRollup: "us_ie_rollup",
+  ieLineItems: "us_independent_expenditures",
+  ieMeta: "us_ie_meta",
 };
 
 /**

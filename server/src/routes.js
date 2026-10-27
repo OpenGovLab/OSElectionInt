@@ -19,6 +19,9 @@ const {
   getStats,
   getVoterInfo,
   getIssues,
+  getAdSpend,
+  getAdSpendTop,
+  getAdSpendMap,
   getStanceMap,
   getStanceFilter,
   getStanceClusters,
@@ -47,6 +50,11 @@ router.get("/stats", longCache, getStats);
 // Issue positions: the menu, then who stands where on one of them.
 // Current locations, distinct from the historical 2012-2020 layer.
 router.get("/polling-2026", longCache, getPolling2026);
+// Outside spending: FEC independent expenditures for and against a
+// candidate. Spending only — the FEC never reports advertising creative.
+router.get("/ad-spend/top", longCache, getAdSpendTop);
+router.get("/ad-spend/map", longCache, getAdSpendMap);
+router.get("/ad-spend", longCache, getAdSpend);
 router.get("/issues", longCache, getIssues);
 // Stance: where people sit on an issue's policy axis.
 router.get("/stance/map", longCache, getStanceMap);

@@ -521,6 +521,145 @@ exports.getPolling2026 = async (req, res) => {
   }
 };
 
+/**
+ * The caveat that rides on every outside-spending response.
+ *
+ * Three claims a reader could otherwise reasonably infer, all wrong:
+ * that we can show them the advertisements (we hold amounts and payees,
+ * never creative); that money against a candidate came from their opponent
+ * (an independent expenditure is by law uncoordinated with any campaign);
+ * and that being heavily opposed predicts losing (it usually marks a race
+ * someone thinks is winnable).
+ */
+const AD_SPEND_CAVEAT =
+  "Independent expenditures reported to the FEC: outside groups spending to "
+  + "support or oppose a candidate, with no coordination with any campaign. "
+  + "Money spent against someone is NOT their opponent's spending. This is "
+  + "spending data only — the FEC reports amounts, payers, payees and a "
+  + "purpose, never the content of an advertisement, so no message text or "
+  + "creative is available here. Spending is not a measure of support and "
+  + "not a prediction of the result.";
+
+const AD_SPEND_SOURCE = "FEC bulk independent_expenditure";
+
+/**
+ * GET /api/us-election/ad-spend?fec_id=
+ *
+ * One candidate's outside-spending picture, plus their largest single
+ * reported expenditures.
+ */
+exports.getAdSpend = async (req, res) => {
+  try {
+    const fecId = req.query.fec_id ? String(req.query.fec_id) : null;
+    if (!fecId) {
+      return res.status(400).json({
+        success: false, message: "fec_id is required",
+      });
+    }
+    const limit = clampInt(req.query.limit, 12, 1, 100);
+    const [row, meta] = await Promise.all([
+      repo.adSpend({ fecId, limit }),
+      repo.adSpendMeta(),
+    ]);
+    res.json({
+      success: true,
+      data: {
+        fec_id: fecId,
+        // null is the honest answer for "we have no record", and it is NOT
+        // the same as zero: 73 candidates with real outside spending are
+        // missing from our candidate table entirely.
+        row: row ?? null,
+        source: AD_SPEND_SOURCE,
+        source_url: meta.load?.source_url ?? null,
+        loaded_at: meta.load?.loaded_at ?? null,
+        caveat: AD_SPEND_CAVEAT,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * GET /api/us-election/ad-spend/top?office=&state=&sort=&limit=&min_total=
+ *
+ * Who is being spent against hardest. `sort=ratio` ranks by how lopsided the
+ * spending is rather than by its size, which surfaces smaller races where a
+ * candidate is being overwhelmingly outspent — but only above a `min_total`
+ * floor in dollars, because a ratio computed against a near-zero denominator
+ * is arithmetic rather than information.
+ */
+exports.getAdSpendTop = async (req, res) => {
+  try {
+    const SORTS = ["oppose", "support", "ratio"];
+    const sort = SORTS.includes(req.query.sort) ? req.query.sort : "oppose";
+    const limit = clampInt(req.query.limit, 25, 1, 200);
+    // Dollars opposed, not a ratio. Defaults to $1m on a ratio sort so the
+    // leaderboard cannot open on a $1,050 denominator.
+    const minTotal = req.query.min_total !== undefined
+      ? Number(req.query.min_total)
+      : (sort === "ratio" ? 1_000_000 : undefined);
+    const [rows, meta] = await Promise.all([
+      repo.adSpendTop({
+        office: req.query.office ? String(req.query.office) : null,
+        state: req.query.state ? String(req.query.state) : null,
+        sort, minTotal, limit,
+        // Floor on the denominator too, for the same reason as minTotal.
+        minSupport: req.query.min_support !== undefined
+          ? Number(req.query.min_support)
+          : (sort === "ratio" ? 250_000 : 0),
+      }),
+      repo.adSpendMeta(),
+    ]);
+    res.json({
+      success: true,
+      data: {
+        sort, count: rows.length, rows,
+        source: AD_SPEND_SOURCE,
+        source_url: meta.load?.source_url ?? null,
+        loaded_at: meta.load?.loaded_at ?? null,
+        caveat: AD_SPEND_CAVEAT,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * GET /api/us-election/ad-spend/map?office=
+ *
+ * Per-candidate totals carrying an ocd id where one can be established, so a
+ * division can be shaded by the outside money fighting over it.
+ */
+exports.getAdSpendMap = async (req, res) => {
+  try {
+    const cycle = clampInt(req.query.cycle, 2026, 1990, 2100);
+    const [rows, meta] = await Promise.all([
+      repo.adSpendMap({
+        office: req.query.office ? String(req.query.office) : null, cycle,
+      }),
+      repo.adSpendMeta(),
+    ]);
+    const unplaced = rows.filter((r) => !r.ocd_id).length;
+    const offTable = rows.filter((r) => !r.in_candidate_table).length;
+    res.json({
+      success: true,
+      data: {
+        cycle, count: rows.length, rows,
+        unplaced,
+        not_in_candidate_table: offTable,
+        source: AD_SPEND_SOURCE,
+        source_url: meta.load?.source_url ?? null,
+        loaded_at: meta.load?.loaded_at ?? null,
+        caveat: AD_SPEND_CAVEAT,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 exports.getIssues = async (req, res) => {
   try {
     const [rows, coverage] = await Promise.all([

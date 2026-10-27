@@ -6,6 +6,7 @@ import { apiService } from "@/lib/api";
 import PersonLinks, { type Social } from "./PersonLinks";
 import PersonPositions from "@/components/us-election/PersonPositions";
 import Portrait from "./Portrait";
+import { AdSpendInline } from "@/components/us-election/AdSpend";
 import VoterInfo from "./VoterInfo";
 
 /**
@@ -698,6 +699,10 @@ function ChallengerRow({ c, max, onOpen }: {
             </span>
           </span>
           <MoneyBar value={c.receipts} max={max} party={c.party} />
+          {/* Money raised is only half of it. What outside groups spend to
+              defeat someone is often the larger number and is never visible
+              in their own filings. */}
+          <AdSpendInline fecId={c.fec_id} />
         </span>
       </div>
     </button>
