@@ -10,6 +10,7 @@ import {
   marginFill,
   marginLabel,
   marginOpacity,
+  PROVISIONAL_FILL_SCALE,
   boundaryWidth,
   raceColor,
   raceRadius,
@@ -349,6 +350,16 @@ export default function USElectionPage({
   const [year, setYear] = useState<number | null>(null);
   const [years, setYears] = useState<number[]>([]);
   const [yearCounts, setYearCounts] = useState<Map<number, number>>(new Map());
+  /**
+   * Which election a year's rows describe — "general" or "primary".
+   *
+   * Five days before the 2026 general the archive holds 2,752 certified 2026
+   * PRIMARY rows and no general ones, so the current cycle is only reachable
+   * as a primary cut. The mapping comes from the API rather than a rule like
+   * "2026 means primary", because the day the general is certified that rule
+   * would silently invert and start mislabelling real results.
+   */
+  const [yearTypes, setYearTypes] = useState<Map<number, string>>(new Map());
   const [margins, setMargins] = useState<Map<string, MarginRow>>(new Map());
   const [holders, setHolders] = useState<Map<string, Holder[]>>(new Map());
   // Who ran, per division, for the cut on screen. Names only — the numbers
@@ -501,6 +512,25 @@ export default function USElectionPage({
     [officeMeta],
   );
   const levelMeta = useMemo(() => LEVELS.find((l) => l.id === level)!, [level]);
+
+  /**
+   * Is the cut on screen a primary rather than a general?
+   *
+   * This drives every label on the page, because the two are NOT the same
+   * measurement even though they share an axis and a colour ramp. A general
+   * margin says who won a seat. A primary margin here is the Democratic
+   * primary's total ballots against the Republican primary's — Alabama
+   * governor 2026 is DEM 365,368 to REP 493,988 — so it says which party's
+   * voters turned out. Colorado reads -25.89 on that cut, and printing it
+   * under a legend that says "D+40 ... R+40" would state something untrue.
+   */
+  const isPrimary = year != null && yearTypes.get(year) === "primary";
+  /** "2026 · PRIMARY · 9" for a picker row; generals keep their plain form. */
+  const yearLabel = useCallback((y: number) => {
+    const n = yearCounts.get(y);
+    const t = yearTypes.get(y) === "primary" ? " · PRIMARY" : "";
+    return `${y}${t}${n ? ` · ${n}` : ""}`;
+  }, [yearCounts, yearTypes]);
   const outOfBand = zoom < levelMeta.minzoom || zoom > levelMeta.maxzoom;
 
   /**
@@ -1088,20 +1118,32 @@ export default function USElectionPage({
     apiService({ method: "get", url: `/us-election/years?level=${level}` })
       .then((r) => {
         if (!alive) return;
-        const list: { year: number; count: number }[] = r?.data?.data?.[office] || [];
+        const list: { year: number; count: number; election_type?: string }[] =
+          r?.data?.data?.[office] || [];
         const ys = [...new Set(list.map((x) => x.year))].sort((a, b) => b - a);
         setYears(ys);
         setYearCounts(new Map(list.map((x) => [x.year, x.count])));
+        setYearTypes(new Map(list.map((x) => [x.year, x.election_type ?? "general"])));
         // Default to the best-covered cycle, not the most recent one.
         // OpenElections coverage is volunteer-contributed and uneven — 2016
         // has 51 states while 2025 has a single stray contest, so "latest"
         // would open on an almost-empty map.
-        const best = list.reduce<{ year: number; count: number } | null>(
+        //
+        // Primaries are excluded from that choice even when they are the
+        // best covered: a primary cut is a different quantity, and opening
+        // the app on one would present turnout as though it were a result
+        // before the reader has chosen to look at it. It stays one click
+        // away in the picker.
+        const generals = list.filter((x) => (x.election_type ?? "general") !== "primary");
+        const pool = generals.length ? generals : list;
+        const best = pool.reduce<{ year: number; count: number } | null>(
           (a, b) => (!a || b.count > a.count ? b : a), null);
         setYear((cur) =>
           cur && ys.includes(cur) ? cur : best?.year ?? ys[0] ?? null);
       })
-      .catch(() => { if (alive) { setYears([]); setYear(null); } });
+      .catch(() => {
+        if (alive) { setYears([]); setYearTypes(new Map()); setYear(null); }
+      });
     return () => { alive = false; };
   }, [office, level]);
 
@@ -1741,8 +1783,21 @@ export default function USElectionPage({
   // eleven round trips and visibly jerky, and the payloads are small enough
   // that holding them is cheaper than asking twice.
   const marginCacheRef = useRef<Map<string, MarginRow[]>>(new Map());
+  /**
+   * The election a year's rows describe. Defaults to general for a year we
+   * have not been told about, which is the safe reading: every historical
+   * cycle in this archive is a general.
+   */
+  const typeFor = useCallback(
+    (y: number) => yearTypes.get(y) ?? "general", [yearTypes]);
+
+  // The type belongs in the cache key, not just the request. Keying on year
+  // alone would let a cached general cut be repainted as a primary the
+  // moment both existed for one year — the rows would be real and the label
+  // on screen would be wrong, which is the worst shape a bug can take here.
   const cutKey = useCallback(
-    (y: number) => `${level}|${office}|${y}`, [level, office]);
+    (y: number) => `${level}|${office}|${y}|${typeFor(y)}`,
+    [level, office, typeFor]);
 
   const fetchCut = useCallback(async (y: number): Promise<MarginRow[]> => {
     const k = cutKey(y);
@@ -1750,13 +1805,14 @@ export default function USElectionPage({
     if (hit) return hit;
     const r = await apiService({
       method: "get",
-      url: `/us-election/margins?level=${level}&office=${office}&year=${y}`,
+      url: `/us-election/margins?level=${level}&office=${office}&year=${y}`
+        + `&election_type=${typeFor(y)}`,
     });
     const rows: MarginRow[] = (r as { data?: { data?: { rows?: MarginRow[] } } })
       ?.data?.data?.rows ?? [];
     marginCacheRef.current.set(k, rows);
     return rows;
-  }, [cutKey, level, office]);
+  }, [cutKey, level, office, typeFor]);
 
   /** Repaint the choropleth for one already-loaded cut. */
   const paintCut = useCallback((list: MarginRow[]) => {
@@ -1793,7 +1849,7 @@ export default function USElectionPage({
   const topCacheRef = useRef<Map<string, TopRow[]>>(new Map());
   useEffect(() => {
     if (!ready || !year) return;
-    const k = `${level}|${office}|${year}`;
+    const k = `${level}|${office}|${year}|${typeFor(year)}`;
     const apply = (list: TopRow[]) =>
       setTopCandidates(new Map(list.map((r) => [r.ocd_id, r.top])));
 
@@ -1803,7 +1859,8 @@ export default function USElectionPage({
     let alive = true;
     apiService({
       method: "get",
-      url: `/us-election/top-candidates?level=${level}&office=${office}&year=${year}`,
+      url: `/us-election/top-candidates?level=${level}&office=${office}&year=${year}`
+        + `&election_type=${typeFor(year)}`,
     })
       .then((r) => {
         if (!alive) return;
@@ -1814,7 +1871,7 @@ export default function USElectionPage({
       })
       .catch(() => { if (alive) setTopCandidates(new Map()); });
     return () => { alive = false; };
-  }, [level, office, year, ready]);
+  }, [level, office, year, ready, typeFor]);
 
   // ── what is on the ballot now ────────────────────────────────────────────
   //
@@ -1897,6 +1954,28 @@ export default function USElectionPage({
     hoverRef.current = null;
     map.once("idle", () => refreshRows(level));
   }, [level, ready, refreshRows, styleEpoch]);
+
+  /**
+   * Damp the choropleth while a primary cut is on screen.
+   *
+   * Guarded on isStyleLoaded and keyed on styleEpoch for the same reason the
+   * visibility effects are: setStyle tears the style down and rebuilds it,
+   * and any paint mutation in that gap throws synchronously out of an effect
+   * and takes the tree down. styleEpoch re-runs this once the new style is
+   * in place, so a basemap swap cannot leave a primary painted at full
+   * strength.
+   */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || !map.isStyleLoaded()) return;
+    const scale = isPrimary ? PROVISIONAL_FILL_SCALE : 1;
+    for (const l of LEVELS) {
+      const id = `${l.id}-fill`;
+      if (map.getLayer(id)) {
+        map.setPaintProperty(id, "fill-opacity", marginOpacity(scale) as never);
+      }
+    }
+  }, [isPrimary, ready, styleEpoch, level]);
 
   // paint the selected division so the map and the panel agree
   const selRef = useRef<string | null>(null);
@@ -2186,7 +2265,13 @@ export default function USElectionPage({
           return `No ${c.year} cut at this level. Closest is ${near}.`;
         }
         setYear(c.year);
-        return `Showing ${c.year}.`;
+        // A spoken or typed "2026" gets the same caveat the map does, or the
+        // one path into this cut that bypasses the picker also bypasses the
+        // label that says what it is.
+        return yearTypes.get(c.year) === "primary"
+          ? `Showing ${c.year} primary turnout — ballots cast in each party's `
+            + "primary, not a result."
+          : `Showing ${c.year}.`;
       }
       case "play": {
         if (timeline.length < 2) return "There is only one cycle to show.";
@@ -2260,7 +2345,8 @@ export default function USElectionPage({
       default:
         return "Type help to see what I understand.";
     }
-  }, [level, years, timeline, play, capabilities, placesForLevel, gotoDivision]);
+  }, [level, years, yearTypes, timeline, play, capabilities, placesForLevel,
+      gotoDivision]);
 
   // A level or office change invalidates the cut being animated.
   useEffect(() => { stop(); }, [level, office, stop]);
@@ -2347,6 +2433,7 @@ export default function USElectionPage({
         zoom={zoom}
         level={level}
         year={year}
+        electionType={isPrimary ? "primary" : "general"}
         inView={rows.length}
       />
 
@@ -2385,9 +2472,7 @@ export default function USElectionPage({
             className="ml-1 rounded-[4px] border border-white/10 bg-slate-900/80 px-2 py-1.5 font-mono text-[10px] tabular-nums uppercase tracking-wider text-slate-300 backdrop-blur outline-none"
           >
             {years.map((y) => (
-              <option key={y} value={y}>
-                {y}{yearCounts.get(y) ? ` · ${yearCounts.get(y)}` : ""}
-              </option>
+              <option key={y} value={y}>{yearLabel(y)}</option>
             ))}
           </select>
         )}
@@ -3123,8 +3208,13 @@ export default function USElectionPage({
             onChange={(e) => { stop(); setYear(timeline[Number(e.target.value)]); }}
             className="h-1 min-w-0 flex-1 cursor-pointer accent-slate-900 dark:accent-white"
           />
-          <span className="w-24 shrink-0 text-right text-xs tabular-nums text-slate-700 dark:text-slate-200">
+          <span className="w-28 shrink-0 text-right text-xs tabular-nums text-slate-700 dark:text-slate-200">
             <span className="font-semibold">{year ?? "—"}</span>
+            {isPrimary && (
+              <span className="ml-1 rounded-sm bg-amber-500/20 px-1 align-middle font-mono text-[9px] font-semibold not-italic tracking-wide text-amber-700 dark:text-amber-300">
+                PRIMARY
+              </span>
+            )}
             <span className="ml-1 text-[10px] text-slate-400">
               {yearCounts.get(year ?? 0) ?? 0}
             </span>
@@ -3169,7 +3259,19 @@ export default function USElectionPage({
 
       {/* legend */}
       <div className="pointer-events-none absolute bottom-9 left-3 z-20 max-w-[19rem] rounded-lg border border-black/10 bg-white/90 px-3 py-2 text-[10px] shadow-lg backdrop-blur dark:border-white/10 dark:bg-slate-900/90">
-        <div className="mb-1 font-semibold text-slate-700 dark:text-slate-200">Margin</div>
+        {/* The ramp is the same; what it measures is not. Saying "Margin"
+            over a primary cut would describe ballots cast in two separate
+            party contests as though they were a contest between parties. */}
+        <div className="mb-1 flex items-center gap-1.5">
+          <span className="font-semibold text-slate-700 dark:text-slate-200">
+            {isPrimary ? "Primary turnout" : "Margin"}
+          </span>
+          {isPrimary && (
+            <span className="rounded-sm bg-amber-500/20 px-1 font-mono text-[9px] font-semibold tracking-wide text-amber-700 dark:text-amber-300">
+              {year} PRIMARY
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-1">
           <span className="text-blue-700 dark:text-blue-400">D+40</span>
           <span className="h-2.5 w-28 rounded-sm" style={{
@@ -3177,6 +3279,13 @@ export default function USElectionPage({
           }} />
           <span className="text-red-700 dark:text-red-400">R+40</span>
         </div>
+        {isPrimary && (
+          <p className="mt-1 max-w-[17rem] text-[9px] leading-snug text-amber-700 dark:text-amber-400/90">
+            Ballots cast in each party&rsquo;s primary, not a result. It says
+            which party&rsquo;s voters turned out — the general has not
+            happened, and primary turnout does not predict it.
+          </p>
+        )}
 
         {/* Stance sits UNDER the margin key, never replacing it: the pins and
             the choropleth are on screen together and a reader has to be able
@@ -3211,8 +3320,23 @@ export default function USElectionPage({
         )}
       </div>
 
+      {/* The cut on screen is a primary, said on the map itself.
+          Everything else that carries the caveat — legend, footer, picker —
+          is chrome a screenshot can crop away. This sits over the country,
+          so an image of the map alone still says what it is showing. It is
+          placed below the out-of-band banner's row so the two never collide. */}
+      {isPrimary && ready && (
+        <div className="pointer-events-none absolute left-1/2 top-12 z-20 -translate-x-1/2 rounded-full border border-amber-400/40 bg-amber-500/95 px-4 py-1.5 text-center text-xs font-semibold text-amber-950 shadow-lg">
+          {year} primary turnout — not a result
+          <span className="ml-2 hidden font-normal opacity-80 sm:inline">
+            the general is {new Date("2026-11-03T00:00:00-05:00") > new Date()
+              ? "not yet held" : "not yet certified"}
+          </span>
+        </div>
+      )}
+
       {outOfBand && ready && (
-        <div className="pointer-events-none absolute left-1/2 top-24 z-20 -translate-x-1/2 rounded-full bg-amber-500/95 px-3.5 py-1.5 text-xs font-medium text-amber-950 shadow-lg">
+        <div className={`pointer-events-none absolute left-1/2 z-20 -translate-x-1/2 rounded-full bg-amber-500/95 px-3.5 py-1.5 text-xs font-medium text-amber-950 shadow-lg ${isPrimary ? "top-24" : "top-12"}`}>
           {zoom < levelMeta.minzoom ? `Zoom in for ${levelMeta.label.toLowerCase()}` : `Zoom out for ${levelMeta.label.toLowerCase()}`}
         </div>
       )}
@@ -3319,7 +3443,7 @@ export default function USElectionPage({
               </span>
               <span className="block text-[11px] text-slate-500 dark:text-slate-400">
                 {loading ? "loading results…"
-                  : withData > 0 ? `${withData.toLocaleString()} with ${year} results · closest first`
+                  : withData > 0 ? `${withData.toLocaleString()} with ${year} ${isPrimary ? "primary turnout" : "results"} · closest first`
                   : `no ${year ?? ""} results at this level`}
               </span>
               {upNext > 0 && (

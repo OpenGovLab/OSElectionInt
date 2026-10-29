@@ -128,15 +128,29 @@ export function marginFill(neutral: string): unknown[] {
   ];
 }
 
-export function marginOpacity(): unknown[] {
+/**
+ * Fill opacity, optionally damped for a provisional cut.
+ *
+ * `scale` below 1 is used for primary cuts. A primary margin is not the same
+ * quantity as a general one — it is turnout between two separate party
+ * contests — and a lighter fill reads as "not the final word" at a glance,
+ * before any label is read. It is a supporting signal only: the banner and
+ * the legend do the actual telling, because a reader with no full-opacity
+ * map beside them cannot judge a shade on its own.
+ */
+export function marginOpacity(scale = 1): unknown[] {
+  const k = (v: number) => Math.round(v * scale * 1000) / 1000;
   return [
     "case",
-    ["boolean", ["feature-state", "selected"], false], FILL_OPACITY.selected,
-    ["boolean", ["feature-state", "hover"], false], FILL_OPACITY.hover,
-    HAS_MARGIN, FILL_OPACITY.data,
+    ["boolean", ["feature-state", "selected"], false], k(FILL_OPACITY.selected),
+    ["boolean", ["feature-state", "hover"], false], k(FILL_OPACITY.hover),
+    HAS_MARGIN, k(FILL_OPACITY.data),
     FILL_OPACITY.none,
   ];
 }
+
+/** How much to damp a primary cut's fill against a general's. */
+export const PROVISIONAL_FILL_SCALE = 0.62;
 
 /**
  * Boundary width: thicker when hovered or selected so the edge reads clearly.

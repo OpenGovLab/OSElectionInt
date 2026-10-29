@@ -167,12 +167,14 @@ export function ChromeHeader() {
  * rather than buried in an about page.
  */
 export function ChromeFooter({
-  cursor, zoom, level, year, inView,
+  cursor, zoom, level, year, electionType, inView,
 }: {
   cursor: { lng: number; lat: number } | null;
   zoom: number;
   level: string;
   year: number | null;
+  /** "primary" when the cycle on screen has no certified general yet. */
+  electionType?: string;
   inView: number;
 }) {
   const deg = (v: number, pos: string, neg: string) =>
@@ -196,6 +198,12 @@ export function ChromeFooter({
         {year && (
           <span>
             CYCLE <span className="tabular-nums text-slate-300">{year}</span>
+            {/* A bare year in a telemetry strip reads as "this is the
+                result". Where the cut is a primary the strip has to say so,
+                or the most glanceable label on screen is the wrong one. */}
+            {electionType === "primary" && (
+              <span className="ml-1 text-amber-300">PRIMARY</span>
+            )}
           </span>
         )}
         <span>
