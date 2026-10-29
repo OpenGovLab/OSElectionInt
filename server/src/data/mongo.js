@@ -46,15 +46,40 @@ async function margins({ level, office, electionType, year, minMajorShare }) {
 }
 
 async function years({ level, electionType }) {
+  // Every year/office cut we hold, with the election type it came from.
+  //
+  // A cycle whose general has not happened yet is still worth offering: in
+  // October 2026 the archive holds 2,752 certified PRIMARY rows for 2026 and
+  // zero general ones, and filtering to general alone made the current cycle
+  // vanish from the timeline entirely. So primary-only years are included,
+  // tagged, and the caller is told which it is.
+  //
+  // General wins a collision. Where a year has both, the general is the
+  // result people mean, and offering the same year twice would make the
+  // picker ambiguous about which cut is on screen.
   const rows = await M(TABLES.margins).aggregate([
-    { $match: { level, election_type: electionType } },
-    { $group: { _id: { year: "$year", office: "$office" }, n: { $sum: 1 } } },
+    { $match: { level, election_type: { $in: [electionType, "primary"] } } },
+    { $group: {
+      _id: { year: "$year", office: "$office", type: "$election_type" },
+      n: { $sum: 1 },
+    } },
     { $sort: { "_id.year": -1 } },
   ]);
   const byOffice = {};
-  for (const r of rows) {
-    (byOffice[r._id.office] ||= []).push({ year: r._id.year, count: r.n });
+  const seen = new Set();
+  // Requested type first, so a primary cannot displace it.
+  for (const pass of [electionType, "primary"]) {
+    for (const r of rows) {
+      if (r._id.type !== pass) continue;
+      const key = `${r._id.office}|${r._id.year}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      (byOffice[r._id.office] ||= []).push({
+        year: r._id.year, count: r.n, election_type: r._id.type,
+      });
+    }
   }
+  for (const list of Object.values(byOffice)) list.sort((a, b) => b.year - a.year);
   return byOffice;
 }
 
