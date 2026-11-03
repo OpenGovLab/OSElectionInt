@@ -18,6 +18,7 @@ const {
   getCapabilities,
   getStats,
   getVoterInfo,
+  getEarlyVote,
   getIssues,
   getAdSpend,
   getAdSpendTop,
@@ -70,6 +71,8 @@ router.get("/stance/map", longCache, getStanceMap);
 router.get("/stance/filter", longCache, getStanceFilter);
 router.get("/stance/clusters", longCache, getStanceClusters);
 router.get("/positions", longCache, getPositions);
+// Ballots already cast, and the party registration of who cast them.
+router.get("/early-vote", longCache, getEarlyVote);
 router.get("/voter-info", longCache, getVoterInfo);
 router.get("/polling-points", longCache, getPollingPoints);
 router.get("/place-photo", longCache, getPlacePhoto);

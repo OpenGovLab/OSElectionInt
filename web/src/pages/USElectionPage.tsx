@@ -136,6 +136,26 @@ interface MarginRow {
  * server returns at most one candidate per party: it keeps the join exact,
  * and a share can never contradict the margin pill sitting next to it.
  */
+/**
+ * Ballots already cast, as /early-vote returns them per state.
+ *
+ * `by_party` is the party REGISTRATION of people who have voted, not votes
+ * for a party, and it is null — never zeroed — for the 22 states that do not
+ * publish one. `none` is unaffiliated and is routinely larger than a party,
+ * so it is a first-class share rather than a remainder.
+ */
+interface EarlyVote {
+  ocd_id: string;
+  state: string;
+  state_abbv: string;
+  as_of: string | null;
+  total: number | null;
+  by_party: { dem: number; rep: number; none: number } | null;
+  party_reported: boolean;
+  turnout_2022: number | null;
+  state_source: string | null;
+}
+
 /** The contest happening now, as /race-2026 returns it per division. */
 interface RaceIncumbent {
   name: string;
@@ -372,6 +392,7 @@ export default function USElectionPage({
   // the historical cut the scrubber selects: ten days out a reader wants to
   // know what is on the ballot NOW, and the two must never be confused.
   const [race2026, setRace2026] = useState<Map<string, Race2026>>(new Map());
+  const [earlyVote, setEarlyVote] = useState<Map<string, EarlyVote>>(new Map());
   const [rows, setRows] = useState<Row[]>([]);
   const [selected, setSelected] = useState<Row | null>(null);
   const [detail, setDetail] = useState<Row | null>(null);
@@ -453,7 +474,7 @@ export default function USElectionPage({
   const playRef = useRef<number | null>(null);
   const [hoverInfo, setHoverInfo] = useState<
     { x: number; y: number; row: Row; total?: number; majorShare?: number;
-      top?: TopCandidate[]; race?: Race2026 } | null>(null);
+      top?: TopCandidate[]; race?: Race2026; early?: EarlyVote } | null>(null);
   const [newsTip, setNewsTip] = useState<{
     x: number; y: number; name: string; articles: number;
     people: string; tilt: number | null; headline: string;
@@ -597,6 +618,8 @@ export default function USElectionPage({
   useEffect(() => { topCandidatesRef.current = topCandidates; }, [topCandidates]);
   const race2026Ref = useRef(race2026);
   useEffect(() => { race2026Ref.current = race2026; }, [race2026]);
+  const earlyVoteRef = useRef(earlyVote);
+  useEffect(() => { earlyVoteRef.current = earlyVote; }, [earlyVote]);
   // Only call a seat vacant when the officeholder feed actually loaded for
   // this office — otherwise "no holder" just means "not fetched".
   const hasHolderData = office === "us_house" || office === "us_senate";
@@ -1916,6 +1939,30 @@ export default function USElectionPage({
     return () => { alive = false; };
   }, [office, ready]);
 
+  // ── ballots already cast ────────────────────────────────────────────────
+  //
+  // One national fetch, once. 59 million ballots were returned before today
+  // and the figure does not move with the office, the level or the timeline,
+  // so there is nothing to key a cache on and nothing to refetch.
+  //
+  // Keyed by the derived state ocd id, which means it only ever joins to a
+  // state hover. That is correct rather than a limitation: the source
+  // publishes per state, and lending a state's number to one of its counties
+  // would be inventing a county figure.
+  useEffect(() => {
+    if (!ready) return;
+    let alive = true;
+    apiService({ method: "get", url: "/us-election/early-vote" })
+      .then((r) => {
+        if (!alive) return;
+        const list = (r as { data?: { data?: { rows?: EarlyVote[] } } })
+          ?.data?.data?.rows ?? [];
+        setEarlyVote(new Map(list.map((v) => [v.ocd_id, v])));
+      })
+      .catch(() => { if (alive) setEarlyVote(new Map()); });
+    return () => { alive = false; };
+  }, [ready]);
+
   // ── fetch margins and push them in as feature state ──────────────────────
   useEffect(() => {
     const map = mapRef.current;
@@ -2035,6 +2082,10 @@ export default function USElectionPage({
         majorShare: m?.major_share,
         top: topCandidatesRef.current.get(id),
         race: race2026Ref.current.get(id),
+        // State-level only: the source publishes nothing below a state, so a
+        // county hover must not inherit its state's figure as if it were the
+        // county's own.
+        early: earlyVoteRef.current.get(id),
       });
       if (hoverRef.current === id) return;
       clear();
@@ -2779,6 +2830,107 @@ export default function USElectionPage({
               </div>
             </>
           )}
+
+          {/* ── BALLOTS ALREADY CAST ─────────────────────────────────
+              Fifty-nine million of them before today. Three things this
+              block is careful about, each of which is easy to get wrong and
+              materially misleading if you do:
+
+              It is party REGISTRATION, not votes. A registered Democrat
+              voting Republican is ordinary, and the label says registered
+              every time so the bar is never read as a lead.
+
+              Twenty-two of the forty-nine states publish no party split at
+              all. The upstream CSV writes 0 in those columns; the ingest
+              corrected it to null, and this renders the sentence rather than
+              an empty bar — Alaska has 99,424 ballots and does not register
+              voters by party.
+
+              Unaffiliated gets equal weight. North Carolina's 1,004,209
+              unaffiliated voters outnumber its 738,750 registered
+              Republicans, so a two-way bar would hide the second-largest
+              bloc in the state. */}
+          {hoverInfo.early?.total ? (
+            <>
+              <div className="mx-3 border-t border-white/5" />
+              <div className="bg-cyan-500/[0.04] px-3 py-2">
+                <div className="mb-1.5 flex items-baseline justify-between gap-2">
+                  <span className="font-mono text-[9px] font-bold tracking-[0.12em] text-cyan-300">
+                    BALLOTS ALREADY CAST
+                  </span>
+                  {hoverInfo.early.as_of && (
+                    <span className="shrink-0 font-mono text-[9px] text-slate-600">
+                      as of {hoverInfo.early.as_of.slice(5)}
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="font-mono text-sm font-semibold tabular-nums text-slate-100">
+                    {hoverInfo.early.total.toLocaleString()}
+                  </span>
+                  {/* Against 2022's FULL-cycle turnout, which is a yardstick
+                      and not a completion percentage — this cycle's own
+                      denominator does not exist until the count finishes. */}
+                  {hoverInfo.early.turnout_2022 ? (
+                    <span className="font-mono text-[9px] text-slate-500">
+                      <span className="tabular-nums text-slate-400">
+                        {Math.round((hoverInfo.early.total / hoverInfo.early.turnout_2022) * 100)}%
+                      </span>
+                      {" "}of 2022 total turnout
+                    </span>
+                  ) : null}
+                </div>
+
+                {hoverInfo.early.party_reported && hoverInfo.early.by_party ? (
+                  (() => {
+                    const bp = hoverInfo.early.by_party;
+                    const sum = bp.dem + bp.rep + bp.none;
+                    if (!sum) return null;
+                    const pct = (n: number) => (n / sum) * 100;
+                    // A stacked three-way bar, deliberately NOT the diverging
+                    // D-to-R ramp the choropleth paints margins with. Three
+                    // abutting segments read as a composition; a centre-out
+                    // gradient would read as a result.
+                    return (
+                      <>
+                        <div className="mt-1.5 flex h-2 w-full overflow-hidden rounded-sm bg-slate-800">
+                          <div style={{ width: `${pct(bp.dem)}%` }} className="bg-blue-500" />
+                          <div style={{ width: `${pct(bp.rep)}%` }} className="bg-red-500" />
+                          <div style={{ width: `${pct(bp.none)}%` }} className="bg-slate-500" />
+                        </div>
+                        <div className="mt-1 flex items-center justify-between gap-1 font-mono text-[9px]">
+                          <span className="text-blue-400">
+                            D <span className="tabular-nums">{bp.dem.toLocaleString()}</span>
+                            <span className="text-blue-400/60"> {pct(bp.dem).toFixed(0)}%</span>
+                          </span>
+                          <span className="text-red-400">
+                            R <span className="tabular-nums">{bp.rep.toLocaleString()}</span>
+                            <span className="text-red-400/60"> {pct(bp.rep).toFixed(0)}%</span>
+                          </span>
+                          <span className="text-slate-400">
+                            UNAF <span className="tabular-nums">{bp.none.toLocaleString()}</span>
+                            <span className="text-slate-500"> {pct(bp.none).toFixed(0)}%</span>
+                          </span>
+                        </div>
+                        <div className="mt-1 font-mono text-[8px] leading-relaxed text-slate-600">
+                          Party <em className="not-italic text-slate-500">registration</em> of
+                          {" "}voters who have returned a ballot — not votes for a party.
+                        </div>
+                      </>
+                    );
+                  })()
+                ) : (
+                  // Not an empty bar and not zeroes: the state genuinely does
+                  // not publish this, and several do not register by party.
+                  <div className="mt-1 font-mono text-[9px] leading-relaxed text-slate-500">
+                    {hoverInfo.early.state_abbv} publishes no party breakdown of
+                    {" "}early ballots.
+                  </div>
+                )}
+              </div>
+            </>
+          ) : null}
 
           {/* turnout */}
           {hoverInfo.total != null && hoverInfo.total > 0 && (

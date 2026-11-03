@@ -1294,6 +1294,66 @@ async function voterInfo(state) {
 }
 
 /**
+ * Ballots already cast in 2026, per state, with the party REGISTRATION of
+ * the people who cast them.
+ *
+ * Registration, not votes. These are the party registrations of voters who
+ * have already returned a ballot; nothing here says which way any of them
+ * voted, and a registered Democrat voting Republican is ordinary. It is the
+ * most misread number in American elections and the field names say so.
+ *
+ * Two shapes of absence, kept distinct. Where a state publishes no party
+ * breakdown, by_party is null and party_reported is false — 22 of the 49
+ * states, because places like Alaska do not register voters by party at all.
+ * The upstream CSV writes 0 in those columns, so a caller that trusts the
+ * raw figure shows "0 DEM" beside Alaska's 99,424 ballots. The ingest already
+ * corrected that to null; this must not undo it by defaulting to zero.
+ *
+ * `none` is not a rounding bucket. In North Carolina unaffiliated voters
+ * outnumber registered Republicans, so it is returned as a first-class share
+ * rather than folded into an "other" remainder.
+ *
+ * as_of is the SOURCE's own per-state date, not our fetch time. States report
+ * on different schedules and the spread here is 2026-10-29 to 2026-11-03;
+ * collapsing them to one national timestamp would invent a synchrony that
+ * does not exist.
+ */
+async function earlyVote({ state } = {}) {
+  const q = state ? { state_abbv: String(state).toUpperCase() } : {};
+  const rows = await M(TABLES.earlyVote).find(q, { _id: 0 }).lean();
+
+  return rows
+    .map((r) => {
+      const voted = r.modes?.voted ?? {};
+      return {
+        // The source is keyed on the postal code and carries no ocd id, so
+        // the join key to the map is derived here rather than in the client.
+        ocd_id: r.state_abbv
+          ? `ocd-division/country:us/state:${r.state_abbv.toLowerCase()}`
+          : null,
+        state: r.state,
+        state_abbv: r.state_abbv,
+        as_of: r.as_of ?? null,
+        total: voted.total ?? null,
+        // Null, never zeroes. See above.
+        by_party: voted.party_reported ? voted.by_party ?? null : null,
+        party_reported: voted.party_reported === true,
+        // in-person / mail-requested / mail-accepted, for the detail view.
+        modes: r.modes ?? {},
+        turnout_2022: r.turnout_2022 ?? null,
+        updated_today: r.updated_today ?? null,
+        state_source: r.state_source ?? null,
+        state_notes: r.state_notes && r.state_notes !== "NA"
+          ? r.state_notes : null,
+        source: r.source ?? null,
+        source_url: r.source_url ?? null,
+      };
+    })
+    .filter((r) => r.ocd_id)
+    .sort((a, b) => (b.total ?? 0) - (a.total ?? 0));
+}
+
+/**
  * Outside spending for and against one candidate.
  *
  * SPENDING, not advertising creative. The FEC reports an amount, a payer, a
@@ -1506,6 +1566,7 @@ module.exports = {
   pollingPoints,
   pollingPoints2026,
   voterInfo,
+  earlyVote,
   resultsTimeline,
   resultsAsOf,
   resultsLatest,

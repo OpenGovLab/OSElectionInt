@@ -105,6 +105,26 @@
  *
  * @property {(state:string) => Promise<Object|null>} voterInfo
  *
+ * @property {(a: {state?:string}) => Promise<Array<{
+ *   ocd_id:string, state:string, state_abbv:string, as_of:string,
+ *   total:number, by_party:{dem:number,rep:number,none:number}|null,
+ *   party_reported:boolean, modes:Object, turnout_2022:number|null,
+ *   state_source:string|null, source:string, source_url:string }>>} earlyVote
+ *   Ballots already cast in 2026, per state, with the PARTY REGISTRATION of
+ *   the people who cast them where the state publishes it.
+ *
+ *   Three things a caller must carry through rather than flatten. It is
+ *   registration, not votes — a registered Democrat can vote Republican, and
+ *   this is the most misread figure in American elections. 22 of the 49
+ *   states report no party at all (Alaska does not register by party), and
+ *   those carry by_party:null with party_reported:false; the upstream CSV
+ *   writes 0 there, and rendering that literally puts "0 DEM" beside a
+ *   six-figure total. And unaffiliated is frequently the largest bloc —
+ *   North Carolina has more unaffiliated voters than registered Republicans
+ *   — so a two-way D-vs-R split hides it.
+ *
+ *   The source carries no ocd_id; it is derived from the postal code.
+ *
  * @property {(a: {category:string, office?:string, role?:string,
  *   minN:number}) => Promise<Array<Object>>} stanceMap
  *   One row per person for a stance map layer. Anyone without a centroid is
@@ -160,6 +180,7 @@ const TABLES = {
   ieMeta: "us_ie_meta",
   resultsLive: "us_results_live",
   resultsChanges: "us_results_changes",
+  earlyVote: "us_early_vote_2026",
 };
 
 /**

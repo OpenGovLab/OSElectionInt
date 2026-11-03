@@ -988,6 +988,62 @@ exports.getStanceClusters = async (req, res) => {
   }
 };
 
+/**
+ * GET /api/us-election/early-vote          — every state, for a bulk hover join
+ * GET /api/us-election/early-vote?state=NC — one state, all modes
+ *
+ * Ballots already returned, and who returned them by party REGISTRATION.
+ * The caveat is not decoration: this is the number most often reported as
+ * though it were a result, and it is not one.
+ */
+exports.getEarlyVote = async (req, res) => {
+  try {
+    const raw = req.query.state ? String(req.query.state).toUpperCase() : null;
+    if (raw && !/^[A-Z]{2}$/.test(raw)) {
+      return res.status(400).json({
+        success: false, message: "state must be a 2-letter code",
+      });
+    }
+    const rows = await repo.earlyVote({ state: raw ?? undefined });
+    if (raw && !rows.length) {
+      return res.json({
+        success: true,
+        data: {
+          state: raw, count: 0, rows: [],
+          // Alabama and New Hampshire are genuinely absent from the source,
+          // which is not the same as having had no early voting.
+          note: "No early-vote figures published for this state in the "
+            + "source. That is an absence of data, not an absence of voting.",
+        },
+      });
+    }
+    const reported = rows.filter((r) => r.party_reported).length;
+    res.json({
+      success: true,
+      data: {
+        cycle: 2026,
+        count: rows.length,
+        party_reported_states: reported,
+        no_party_states: rows.length - reported,
+        national_total: rows.reduce((n, r) => n + (r.total ?? 0), 0),
+        rows,
+        source: rows[0]?.source ?? "University of Florida Election Lab",
+        caveat: "Ballots already cast, compiled by the University of Florida "
+          + "Election Lab from state reports. Each state carries its own "
+          + "as-of date because states report on different schedules. These "
+          + "are the PARTY REGISTRATIONS of people who have voted, not votes "
+          + "for a party: a registered Democrat can vote Republican, and "
+          + "nothing here says who anyone voted for. "
+          + `${rows.length - reported} of ${rows.length} states publish no `
+          + "party breakdown at all — several, like Alaska, do not register "
+          + "voters by party — and those carry null rather than zero.",
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 exports.getVoterInfo = async (req, res) => {
   try {
     const state = String(req.query.state || "").toUpperCase();
