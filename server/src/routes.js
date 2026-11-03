@@ -22,6 +22,9 @@ const {
   getIssues,
   getAdSpend,
   getAdSpendTop,
+  getPacs,
+  getPac,
+  getPacsForCandidate,
   getAdSpendMap,
   getStanceMap,
   getStanceFilter,
@@ -63,6 +66,11 @@ router.get("/polling-2026", longCache, getPolling2026);
 // Outside spending: FEC independent expenditures for and against a
 // candidate. Spending only — the FEC never reports advertising creative.
 router.get("/ad-spend/top", longCache, getAdSpendTop);
+// Federal committee registry joined to what each committee spent.
+// for-candidate is declared BEFORE /:id or Express matches it as an id.
+router.get("/pacs/for-candidate", longCache, getPacsForCandidate);
+router.get("/pacs/:id", longCache, getPac);
+router.get("/pacs", longCache, getPacs);
 router.get("/ad-spend/map", longCache, getAdSpendMap);
 router.get("/ad-spend", longCache, getAdSpend);
 router.get("/issues", longCache, getIssues);

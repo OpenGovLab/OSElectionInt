@@ -1,0 +1,61 @@
+{
+  "_comment": [
+    "Readable names for committees the FEC registry lists only as initials.",
+    "",
+    "WHY THIS FILE HAS TO EXIST. The obvious assumption is that joining a",
+    "filed abbreviation to the FEC committee registry resolves it. It does",
+    "not: the registry carries the SAME string. C00571703 is named 'SLF PAC'",
+    "in the registry, C00495028 is 'HMP', C00504530 is 'CLF'. The",
+    "CONNECTED_ORG_NM column does not help either and is often unrelated —",
+    "it gives WinSenate as 'SMP', HMP as 'MINNESOTA SECOND DISTRICT VICT'",
+    "and CLF as 'PROTECT THE HOUSE 2024'.",
+    "",
+    "So the expansion is OUR annotation, not FEC data, and it is marked as",
+    "such on every record (`name_source: \"alias_file\"`). A dashboard that",
+    "silently presented these as the registry's own names would be",
+    "misrepresenting the source.",
+    "",
+    "ONLY WELL-DOCUMENTED COMMITTEES ARE LISTED. Where we do not know what",
+    "an abbreviation stands for it is left out and the filed name shown",
+    "as-is. Guessing at an expansion would attach a political identity to a",
+    "committee on no evidence, which is worse than showing initials.",
+    "",
+    "`affiliation` describes who the committee is understood to back. It is",
+    "descriptive of the committee's stated purpose, NOT a claim about any",
+    "candidate, and must never be rendered as a candidate's own property."
+  ],
+  "aliases": {
+    "C00571703": {
+      "name": "Senate Leadership Fund",
+      "affiliation": "Senate Republican super PAC",
+      "confidence": "high"
+    },
+    "C00504530": {
+      "name": "Congressional Leadership Fund",
+      "affiliation": "House Republican super PAC",
+      "confidence": "high"
+    },
+    "C00495028": {
+      "name": "House Majority PAC",
+      "affiliation": "House Democratic super PAC",
+      "confidence": "high"
+    },
+    "C00484642": {
+      "name": "Senate Majority PAC",
+      "affiliation": "Senate Democratic super PAC",
+      "confidence": "high"
+    },
+    "C00892471": {
+      "name": "Make America Great Again Inc.",
+      "affiliation": "Super PAC supporting Donald Trump",
+      "confidence": "high"
+    }
+  },
+  "_unresolved_note": [
+    "Deliberately absent, despite being large spenders, because we do not",
+    "have a documented expansion: TEXAS PAC (C00960211), NO GOING BACK PAC",
+    "INC. (C00960435), WINSENATE (C00865444, registry lists its connected",
+    "organisation as SMP), AMERICA PAC (C00879510). These render under",
+    "their filed names."
+  ]
+}

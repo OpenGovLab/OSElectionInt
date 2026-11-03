@@ -1,0 +1,55 @@
+{
+  "_comment": [
+    "FEC committee master (cm.txt) single-letter codes, decoded.",
+    "",
+    "These are the FEC's own published code lists, not our judgement, which",
+    "is why they sit apart from pac_aliases.json. The raw letter is kept on",
+    "every record beside the label so a reader can check it against the FEC",
+    "data dictionary rather than trusting our expansion.",
+    "",
+    "The distinction that matters most for this dashboard is between a",
+    "CANDIDATE's own committee (H/S/P) and an OUTSIDE group (O/V/W/N/Q/I).",
+    "Only the second kind makes independent expenditures, and conflating",
+    "them would show a candidate 'spending against' someone when the money",
+    "is their own campaign's."
+  ],
+  "committee_type": {
+    "H": { "label": "House candidate committee", "outside": false },
+    "S": { "label": "Senate candidate committee", "outside": false },
+    "P": { "label": "Presidential candidate committee", "outside": false },
+    "N": { "label": "PAC — nonqualified", "outside": true },
+    "Q": { "label": "PAC — qualified", "outside": true },
+    "O": { "label": "Super PAC (independent expenditure only)", "outside": true },
+    "V": { "label": "Hybrid PAC with non-contribution account — nonqualified", "outside": true },
+    "W": { "label": "Hybrid PAC with non-contribution account — qualified", "outside": true },
+    "I": { "label": "Independent expenditure filer (person or group)", "outside": true },
+    "U": { "label": "Single-candidate independent expenditure", "outside": true },
+    "E": { "label": "Electioneering communication filer", "outside": true },
+    "X": { "label": "Party committee — nonqualified", "outside": false },
+    "Y": { "label": "Party committee — qualified", "outside": false },
+    "Z": { "label": "National party non-federal account", "outside": false },
+    "D": { "label": "Delegate committee", "outside": false },
+    "C": { "label": "Communication cost filer", "outside": true }
+  },
+  "designation": {
+    "A": "Authorized by a candidate",
+    "B": "Lobbyist/registrant PAC",
+    "D": "Leadership PAC",
+    "J": "Joint fundraising committee",
+    "P": "Principal campaign committee",
+    "U": "Unauthorized"
+  },
+  "org_type": {
+    "C": "Corporation",
+    "L": "Labor organization",
+    "M": "Membership organization",
+    "T": "Trade association",
+    "V": "Cooperative",
+    "W": "Corporation without capital stock"
+  },
+  "party": {
+    "DEM": "Democratic", "REP": "Republican", "IND": "Independent",
+    "LIB": "Libertarian", "GRE": "Green", "UNK": "Unknown", "NON": "Non-party",
+    "NNE": "None", "OTH": "Other"
+  }
+}

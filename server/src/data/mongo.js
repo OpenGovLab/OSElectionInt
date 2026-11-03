@@ -1367,6 +1367,162 @@ async function earlyVote({ state } = {}) {
  * and 16 quarantined junk filings worth $38.5bn. The line items returned
  * here are for display only and exclude supersessions for the same reason.
  */
+/**
+ * Committee search — the "locate a PAC" surface.
+ *
+ * Two populations live here and conflating them is the easy mistake.
+ * `us_pacs` is the REGISTRY: ~21,000 federal committees, most of which
+ * spend nothing in any given cycle. `us_pac_rollup` is the ~880 that
+ * actually made independent expenditures. Searching the registry and
+ * implying activity would present a dormant shell as a player, so the
+ * default is spenders-only and `include_inactive` has to be asked for.
+ */
+async function pacSearch({ q, type, party, minTotal, sort, includeInactive, limit }) {
+  const key = sort === "support" ? "support_total"
+    : sort === "oppose" ? "oppose_total"
+      : sort === "candidates" ? "candidates_count"
+        : "total";
+
+  if (!includeInactive) {
+    const f = {};
+    if (q) f.$or = [
+      { name: { $regex: q, $options: "i" } },
+      { filed_name: { $regex: q, $options: "i" } },
+    ];
+    if (type) f.committee_type = String(type).toUpperCase();
+    if (party) f.party_label = { $regex: `^${party}`, $options: "i" };
+    if (Number.isFinite(minTotal)) f.total = { $gte: minTotal };
+    return M(TABLES.pacRollup).find(f, { _id: 0 })
+      .sort({ [key]: -1 }).limit(limit).lean();
+  }
+
+  // Registry-wide. Rows carry spent_this_cycle so a caller can still tell
+  // a dormant registration from an active committee.
+  const f = {};
+  if (q) f.$or = [
+    { name: { $regex: q, $options: "i" } },
+    { filed_name: { $regex: q, $options: "i" } },
+    { connected_org: { $regex: q, $options: "i" } },
+  ];
+  if (type) f.committee_type = String(type).toUpperCase();
+  if (party) f.party_label = { $regex: `^${party}`, $options: "i" };
+  const rows = await M(TABLES.pacs).find(f, { _id: 0 })
+    .limit(limit).lean();
+  const ids = rows.map((r) => r.committee_id);
+  const spend = await M(TABLES.pacRollup)
+    .find({ committee_id: { $in: ids } },
+      { _id: 0, committee_id: 1, total: 1, support_total: 1,
+        oppose_total: 1, candidates_count: 1 }).lean();
+  const byId = new Map(spend.map((s) => [s.committee_id, s]));
+  return rows
+    .map((r) => ({ ...r, ...(byId.get(r.committee_id) || {
+      total: 0, support_total: 0, oppose_total: 0, candidates_count: 0,
+    }) }))
+    .sort((a, b) => (b[key] ?? 0) - (a[key] ?? 0));
+}
+
+/** One committee: registry profile plus what it spent, if anything. */
+async function pacById({ committeeId }) {
+  const id = String(committeeId).toUpperCase();
+  // .collection bypasses Mongoose casting: these documents use the FEC
+  // committee id as their _id, and the dynamically-built model assumes an
+  // ObjectId, so a plain findOne throws CastError on "C00960211".
+  const [profile, spend] = await Promise.all([
+    M(TABLES.pacs).collection.findOne({ _id: id }, { projection: { _id: 0 } }),
+    M(TABLES.pacRollup).findOne({ committee_id: id }, { _id: 0 }).lean(),
+  ]);
+  if (!profile && !spend) return null;
+  return {
+    ...(profile || {}),
+    // A committee can spend and not appear in the registry at all. That is
+    // worth surfacing rather than smoothing over: every such committee in
+    // the 2026 data turned out to be a junk self-filing.
+    in_registry: !!profile,
+    spending: spend || null,
+    spent_this_cycle: !!spend,
+  };
+}
+
+/**
+ * Inverse view: every committee that spent on one candidate.
+ *
+ * Aggregated from the LINE ITEMS, not from each committee's rollup. The
+ * rollups cap `top_against`/`top_for` at ten candidates each, so a
+ * committee with a broad portfolio — NO GOING BACK PAC touches 131
+ * candidates — drops anyone outside its own top ten. Reading those arrays
+ * undercounted Talarico's opposition by $2.9m against the authoritative
+ * total, silently and only for the candidates spread across the most
+ * committees. `amendment: {$ne: "A"}` matches the ad-spend endpoints so a
+ * superseded filing is not counted twice.
+ */
+async function pacsForCandidate({ fecId, limit }) {
+  const cid = String(fecId);
+  const agg = await M(TABLES.ieLineItems).aggregate([
+    { $match: { candidate_id: cid, amendment: { $ne: "A" } } },
+    { $group: {
+      _id: { $ifNull: ["$spender_id", "$spender_name"] },
+      committee_id: { $first: "$spender_id" },
+      filed_name: { $first: "$spender_name" },
+      against: { $sum: { $cond: [
+        { $eq: ["$support_oppose", "O"] }, "$amount", 0] } },
+      for: { $sum: { $cond: [
+        { $eq: ["$support_oppose", "S"] }, "$amount", 0] } },
+      rows: { $sum: 1 },
+      first_date: { $min: {
+        $ifNull: ["$dissemination_date", "$expenditure_date"] } },
+      last_date: { $max: {
+        $ifNull: ["$dissemination_date", "$expenditure_date"] } },
+    } },
+    { $sort: { against: -1 } },
+  ]);
+
+  const ids = agg.map((a) => a.committee_id).filter(Boolean);
+  const profiles = await M(TABLES.pacs).collection
+    .find({ _id: { $in: ids } },
+      { projection: { _id: 1, name: 1, name_source: 1, affiliation: 1,
+        committee_type_label: 1, party_label: 1 } })
+    .toArray();
+  const byId = new Map(profiles.map((p) => [p._id, p]));
+
+  const rows = agg.map((a) => {
+    const p = a.committee_id ? byId.get(a.committee_id) : null;
+    return {
+      committee_id: a.committee_id ?? null,
+      name: (p && p.name) || a.filed_name,
+      filed_name: a.filed_name,
+      name_source: p ? p.name_source : null,
+      affiliation: p ? p.affiliation : null,
+      committee_type_label: p ? p.committee_type_label : null,
+      party_label: p ? p.party_label : null,
+      // A spender absent from the registry is worth flagging: every such
+      // committee in the 2026 data proved to be a junk self-filing.
+      in_registry: !!p,
+      against: a.against,
+      for: a.for,
+      rows: a.rows,
+      first_date: a.first_date ?? null,
+      last_date: a.last_date ?? null,
+    };
+  });
+
+  rows.sort((x, y) => (y.against + y.for) - (x.against + x.for));
+  return {
+    rows: rows.slice(0, limit),
+    matched: rows.length,
+    against_total: rows.reduce((t, r) => t + r.against, 0),
+    for_total: rows.reduce((t, r) => t + r.for, 0),
+  };
+}
+
+async function pacMeta() {
+  const rows = await M(TABLES.pacMeta).find({}, { _id: 1, cycle: 1,
+    committees: 1, committees_with_spending: 1, unmatched_to_registry: 1,
+    source_url: 1, scope: 1, loaded_at: 1, updated_at: 1 }).lean();
+  const out = {};
+  for (const r of rows) out[String(r._id).split("-")[0]] = r;
+  return out;
+}
+
 async function adSpend({ fecId, limit }) {
   const rollup = await M(TABLES.ieRollup)
     .findOne({ candidate_id: String(fecId) }, { _id: 0 }).lean();
@@ -1578,6 +1734,10 @@ module.exports = {
   stanceFilter,
   stanceClusters,
   stanceCoverage,
+  pacSearch,
+  pacById,
+  pacsForCandidate,
+  pacMeta,
   adSpend,
   adSpendTop,
   adSpendMap,

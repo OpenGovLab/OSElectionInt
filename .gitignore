@@ -4,3 +4,4 @@ dist/
 *.tsbuildinfo
 __pycache__/
 .ie_raw/
+.pac_raw/

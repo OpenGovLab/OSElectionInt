@@ -679,6 +679,113 @@ exports.getAdSpend = async (req, res) => {
  * floor in dollars, because a ratio computed against a near-zero denominator
  * is arithmetic rather than information.
  */
+const PAC_SCOPE_CAVEAT =
+  "Federal committees registered with the FEC. State and local PACs "
+  + "register with fifty separate state authorities and are NOT included, so "
+  + "this is not every PAC in the United States. Registration is also not "
+  + "activity: of roughly 21,000 registered federal committees only about 880 "
+  + "made any independent expenditure this cycle, and a registry entry never "
+  + "implies spending. Independent expenditures are uncoordinated with any "
+  + "campaign by law, so money a committee spent against a candidate is that "
+  + "committee's money, not the opponent's. Nothing here scores a committee "
+  + "on influence or effectiveness.";
+
+/**
+ * GET /pacs?q=&type=&party=&min_total=&sort=&include_inactive=&limit=
+ *
+ * Defaults to committees that actually spent. The registry is 24x larger
+ * and mostly dormant, so searching it by default would bury the six
+ * committees that account for most of the money under shell registrations.
+ */
+exports.getPacs = async (req, res) => {
+  try {
+    const SORTS = ["total", "oppose", "support", "candidates"];
+    const sort = SORTS.includes(req.query.sort) ? req.query.sort : "total";
+    const limit = clampInt(req.query.limit, 50, 1, 500);
+    const minTotal = req.query.min_total !== undefined
+      ? Number(req.query.min_total) : undefined;
+    const [rows, meta] = await Promise.all([
+      repo.pacSearch({
+        q: req.query.q ? String(req.query.q).slice(0, 120) : null,
+        type: req.query.type ? String(req.query.type) : null,
+        party: req.query.party ? String(req.query.party) : null,
+        minTotal, sort,
+        includeInactive: req.query.include_inactive === "true",
+        limit,
+      }),
+      repo.pacMeta(),
+    ]);
+    res.json({
+      success: true,
+      data: {
+        sort, count: rows.length, rows,
+        registered_total: meta.registry?.committees ?? null,
+        spenders_total: meta.rollup?.committees_with_spending ?? null,
+        include_inactive: req.query.include_inactive === "true",
+        source: "FEC committee master + Schedule E",
+        source_url: meta.registry?.source_url ?? null,
+        loaded_at: meta.registry?.loaded_at ?? null,
+        caveat: PAC_SCOPE_CAVEAT,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/** GET /pacs/:id — one committee's profile and what it spent. */
+exports.getPac = async (req, res) => {
+  try {
+    const row = await repo.pacById({ committeeId: req.params.id });
+    if (!row) {
+      return res.status(404).json({
+        success: false,
+        message: `no federal committee ${req.params.id}`,
+      });
+    }
+    res.json({
+      success: true,
+      data: { row, source: "FEC committee master + Schedule E",
+        caveat: PAC_SCOPE_CAVEAT },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * GET /pacs/for-candidate?fec_id=
+ *
+ * Every committee that spent for or against one candidate. The inverse of
+ * a committee profile, and the view that answers "who is coming after me".
+ */
+exports.getPacsForCandidate = async (req, res) => {
+  try {
+    const fecId = req.query.fec_id ? String(req.query.fec_id) : null;
+    if (!fecId) {
+      return res.status(400).json({
+        success: false, message: "fec_id is required",
+      });
+    }
+    const limit = clampInt(req.query.limit, 50, 1, 200);
+    const res_ = await repo.pacsForCandidate({ fecId, limit });
+    res.json({
+      success: true,
+      data: {
+        fec_id: fecId, count: res_.rows.length, rows: res_.rows,
+        // Over all matching committees; `count` is the page.
+        matched: res_.matched,
+        against_total: res_.against_total,
+        for_total: res_.for_total,
+        source: "FEC Schedule E + committee master",
+        caveat: PAC_SCOPE_CAVEAT,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 exports.getAdSpendTop = async (req, res) => {
   try {
     const SORTS = ["oppose", "support", "ratio"];
