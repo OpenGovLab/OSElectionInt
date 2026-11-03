@@ -495,6 +495,96 @@ exports.getCandidatePlaces = async (req, res) => {
  * an empty answer means a state has not published yet, never that it has no
  * polling places.
  */
+/**
+ * The caveat on every live-results response.
+ *
+ * Four things a reader could otherwise infer, all wrong: that these are
+ * final (canvassing runs for weeks and the certified numbers will differ);
+ * that someone has won (we never call a race, and source_call is only ever
+ * another organisation's claim, attributed); that a lead means a win (an
+ * early lead usually means one batch landed before another); and that a
+ * count is nearly complete (most states publish no reporting denominator,
+ * so completeness is frequently unknowable rather than high).
+ */
+const LIVE_CAVEAT =
+  "Unofficial election-night returns read from each state's own feed. Not "
+  + "certified: canvassing takes weeks and final totals will differ. No "
+  + "winner is called here — a lead is a count at a moment, not a result, "
+  + "and where a state publishes no precinct-reporting denominator we leave "
+  + "completeness blank rather than estimate it.";
+
+const LIVE_CYCLE = 2026;
+
+/**
+ * GET /api/us-election/results-live/timeline
+ *
+ * What there is to play. `playable` is false on a single timestamp: one
+ * report is a starting gun, not a race, and a scrubber with one stop should
+ * say so rather than render an inert control.
+ */
+exports.getResultsTimeline = async (req, res) => {
+  try {
+    const t = await repo.resultsTimeline({ cycle: LIVE_CYCLE });
+    res.json({
+      success: true,
+      data: {
+        ...t,
+        cycle: LIVE_CYCLE,
+        // Candidate-level numbers cannot be rebuilt for a past moment; the
+        // change log never stored them. See contract.js.
+        detail_available: false,
+        caveat: LIVE_CAVEAT,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * GET /api/us-election/results-live?as_of=&office=&level=
+ * GET /api/us-election/results-live/latest?office=&level=
+ *
+ * With as_of, the count as it stood then — totals and who led, never
+ * candidate detail. Without it, the present, which does carry candidates.
+ */
+exports.getResultsLive = async (req, res) => {
+  try {
+    const office = req.query.office ? String(req.query.office) : null;
+    const level = req.query.level ? String(req.query.level) : null;
+    if (level && !LEVELS.includes(level)) {
+      return res.status(400).json({
+        success: false, message: `level must be one of ${LEVELS}`,
+      });
+    }
+    const asOf = req.query.as_of ? String(req.query.as_of) : null;
+    if (asOf && Number.isNaN(Date.parse(asOf))) {
+      return res.status(400).json({
+        success: false, message: "as_of must be an ISO-8601 timestamp",
+      });
+    }
+    const rows = asOf
+      ? await repo.resultsAsOf({ asOf, office, level, cycle: LIVE_CYCLE })
+      : await repo.resultsLatest({ office, level, cycle: LIVE_CYCLE });
+    res.json({
+      success: true,
+      data: {
+        count: rows.length,
+        rows,
+        as_of: asOf,
+        cycle: LIVE_CYCLE,
+        // Totals and leader only when replaying a past moment.
+        detail_available: !asOf,
+        // The clock is the SOURCE's reporting time, not when we fetched.
+        clock: "source reported_at",
+        caveat: LIVE_CAVEAT,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 exports.getPolling2026 = async (req, res) => {
   try {
     const limit = clampInt(req.query.limit, 500, 1, 2000);

@@ -1171,6 +1171,124 @@ async function pollingPoints2026({ bbox, kinds, limit }) {
   }));
 }
 
+/**
+ * The window election night actually covers.
+ *
+ * Read from the change log rather than from us_results_live, because the log
+ * is what a replay steps through: if it holds one timestamp there is nothing
+ * to animate, however many contests are loaded.
+ *
+ * Timestamps are compared as DATES, not strings. They arrive as ISO-8601
+ * with an offset, and lexical ordering only coincides with chronological
+ * ordering while every source happens to report in +00:00. One state
+ * publishing -05:00 would silently sort its 8pm report before a 2pm one.
+ */
+async function resultsTimeline({ cycle }) {
+  const rows = await M(TABLES.resultsChanges).aggregate([
+    { $match: { cycle } },
+    { $addFields: { ts: { $toDate: "$to_reported_at" } } },
+    { $group: {
+      _id: "$ts",
+      changes: { $sum: 1 },
+      contests: { $addToSet: "$contest_id" },
+    } },
+    { $project: { _id: 0, at: "$_id", changes: 1, contests: { $size: "$contests" } } },
+    { $sort: { at: 1 } },
+  ]);
+  const states = await M(TABLES.resultsChanges).distinct("state", { cycle });
+  return {
+    buckets: rows.map((r) => ({
+      at: r.at instanceof Date ? r.at.toISOString() : r.at,
+      changes: r.changes,
+      contests: r.contests,
+    })),
+    first: rows.length ? (rows[0].at instanceof Date ? rows[0].at.toISOString() : rows[0].at) : null,
+    last: rows.length
+      ? (rows[rows.length - 1].at instanceof Date
+        ? rows[rows.length - 1].at.toISOString() : rows[rows.length - 1].at)
+      : null,
+    states: states.filter(Boolean).sort(),
+    // One bucket is a starting gun, not a race: there is nothing to play.
+    playable: rows.length > 1,
+  };
+}
+
+/**
+ * Every contest as it stood at a moment, rebuilt from the change log.
+ *
+ * Per contest this takes the latest change at or before `asOf` — never a
+ * later one, which is the whole point of a replay. Returns totals and who
+ * led; see the note in contract.js for why candidate-level detail is not
+ * recoverable here.
+ */
+async function resultsAsOf({ asOf, office, level, cycle }) {
+  const q = { cycle };
+  if (office) q.office = office;
+  if (level && LEVEL_OCD_PATTERN[level]) {
+    q.ocd_id = { $regex: LEVEL_OCD_PATTERN[level] };
+  }
+  const rows = await M(TABLES.resultsChanges).aggregate([
+    { $match: q },
+    { $addFields: { ts: { $toDate: "$to_reported_at" } } },
+    { $match: { ts: { $lte: new Date(asOf) } } },
+    { $sort: { ts: -1 } },
+    { $group: { _id: "$contest_id", doc: { $first: "$$ROOT" } } },
+    { $replaceRoot: { newRoot: "$doc" } },
+  ]);
+  return rows.map((r) => ({
+    contest_id: r.contest_id,
+    ocd_id: r.ocd_id,
+    office: r.office,
+    district: r.district ?? null,
+    state: r.state,
+    total_votes: r.total_votes ?? 0,
+    leader: r.leader ?? null,
+    kind: r.kind ?? null,
+    reported_at: r.ts instanceof Date ? r.ts.toISOString() : r.to_reported_at,
+  }));
+}
+
+/**
+ * Current standing, with candidate detail. This is the only cut that has it.
+ *
+ * precincts_reporting is passed through untouched, including when it is
+ * null. North Carolina publishes no reporting denominator, so the ingest
+ * records precincts_reporting_available:false and the observable
+ * precincts_with_votes instead. Those are NOT the same quantity — a precinct
+ * can report a zero for one contest and still have reported — so nothing
+ * here converts one into the other or derives a percent complete from it.
+ */
+async function resultsLatest({ office, level, cycle }) {
+  const q = { cycle };
+  if (office) q.office = office;
+  if (level && LEVEL_OCD_PATTERN[level]) {
+    q.ocd_id = { $regex: LEVEL_OCD_PATTERN[level] };
+  }
+  const rows = await M(TABLES.resultsLive).find(q).lean();
+  return rows.map((r) => ({
+    contest_id: r._id,
+    ocd_id: r.ocd_id,
+    office: r.office,
+    district: r.district ?? null,
+    state: r.state,
+    candidates: (r.candidates ?? []).map((c) => ({
+      name: c.name, party: c.party, votes: c.votes ?? 0,
+      percent: c.percent ?? null,
+    })),
+    total_votes: r.total_votes ?? 0,
+    precincts_reporting: r.precincts_reporting ?? null,
+    precincts_reporting_available: r.precincts_reporting_available === true,
+    precincts_total: r.precincts_total ?? null,
+    precincts_with_votes: r.precincts_with_votes ?? null,
+    is_estimate: r.is_estimate === true,
+    // Never ours. Null unless a source stated one, and then it is theirs.
+    source_call: r.source_call ?? null,
+    source: r.source ?? null,
+    source_url: r.source_url ?? null,
+    reported_at: r.reported_at ?? null,
+  }));
+}
+
 async function voterInfo(state) {
   return M(TABLES.voterInfo).collection.findOne({ _id: state });
 }
@@ -1388,6 +1506,9 @@ module.exports = {
   pollingPoints,
   pollingPoints2026,
   voterInfo,
+  resultsTimeline,
+  resultsAsOf,
+  resultsLatest,
   issueCategories,
   positionsForDivision,
   positionsByIssue,

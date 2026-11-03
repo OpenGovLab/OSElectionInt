@@ -84,6 +84,8 @@ import {
 } from "@/config/usElectionBasemaps";
 import { useIsDark } from "@/lib/theme";
 import { apiService } from "@/lib/api";
+import LiveResults from "@/components/us-election/LiveResults";
+import type { LiveCut } from "@/lib/liveResults";
 import { ChromeFooter, ChromeHeader } from "@/components/Chrome";
 import type { IntroPhase } from "@/App";
 
@@ -525,6 +527,15 @@ export default function USElectionPage({
    * under a legend that says "D+40 ... R+40" would state something untrue.
    */
   const isPrimary = year != null && yearTypes.get(year) === "primary";
+  /**
+   * The live cycle. 2026 is the one year whose general is being counted as
+   * the page is open, so its scrubber steps across TONIGHT rather than
+   * across cycles. Derived from the selected year, not hardcoded as a date,
+   * so the mode retires by itself when a reader scrubs back to 2024.
+   */
+  const LIVE_CYCLE = 2026;
+  const isLiveCycle = year === LIVE_CYCLE;
+  const [liveCut, setLiveCut] = useState<LiveCut | null>(null);
   /** "2026 · PRIMARY · 9" for a picker row; generals keep their plain form. */
   const yearLabel = useCallback((y: number) => {
     const n = yearCounts.get(y);
@@ -3188,8 +3199,15 @@ export default function USElectionPage({
         }}
       />
 
+      {/* Election night: the clock replaces the cycle axis. Only one scrubber
+          is ever mounted — two playback controls on screen at once would
+          leave a reader unsure which axis the map is moving along. */}
+      {isLiveCycle && (
+        <LiveResults office={office} level={level} onCut={setLiveCut} />
+      )}
+
       {/* timeline scrubber */}
-      {timeline.length > 1 && (
+      {!isLiveCycle && timeline.length > 1 && (
         <div className="pointer-events-auto absolute bottom-9 left-1/2 z-20 hidden w-[min(34rem,calc(100%-24rem))] -translate-x-1/2 items-center gap-3 rounded-xl border border-black/10 bg-white/95 px-3 py-2 shadow-lg backdrop-blur md:flex dark:border-white/15 dark:bg-slate-900/95">
           <button
             onClick={() => (playing ? stop() : play())}
@@ -3319,6 +3337,21 @@ export default function USElectionPage({
           </div>
         )}
       </div>
+
+      {/* Tonight's count, said on the map itself — same reasoning as the
+          primary banner below: legend and footer are croppable, this is not.
+          Shown only once returns actually exist, so it never announces a
+          count that has not started. Emerald, to sit apart from the amber
+          primary banner and from every political ramp on the map. */}
+      {isLiveCycle && ready && (liveCut?.count ?? 0) > 0 && (
+        <div className="pointer-events-none absolute left-1/2 top-12 z-20 flex -translate-x-1/2 items-center gap-2 rounded-full border border-emerald-400/40 bg-emerald-600/95 px-4 py-1.5 text-center text-xs font-semibold text-white shadow-lg">
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white/90" />
+          Counting tonight — unofficial, no race called
+          <span className="hidden font-normal opacity-85 sm:inline">
+            {liveCut?.as_of ? "· replaying" : "· live"}
+          </span>
+        </div>
+      )}
 
       {/* The cut on screen is a primary, said on the map itself.
           Everything else that carries the caveat — legend, footer, picker —

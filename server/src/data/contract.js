@@ -158,7 +158,26 @@ const TABLES = {
   ieRollup: "us_ie_rollup",
   ieLineItems: "us_independent_expenditures",
   ieMeta: "us_ie_meta",
+  resultsLive: "us_results_live",
+  resultsChanges: "us_results_changes",
 };
+
+/**
+ * ── What the election-night change log can and cannot replay ──────────────
+ *
+ * us_results_changes is append-only, but it is a SUMMARY log, not a snapshot
+ * log. Each row carries contest_id, to_reported_at, total_votes, leader and
+ * kind — and nothing per candidate. So resultsAsOf() can rebuild a contest's
+ * TOTAL and who was ahead at a given moment, and genuinely cannot rebuild
+ * the per-candidate split at that moment. Candidate detail exists only at
+ * the present, in us_results_live.
+ *
+ * That boundary is reported to the client as `detail_available: false`
+ * rather than papered over, because the alternative is interpolating numbers
+ * nobody published. If per-candidate replay is wanted later, the ingest has
+ * to write a snapshot per run; no amount of API cleverness recovers data the
+ * log never stored.
+ */
 
 /**
  * Stance axes live in scripts/data/issue_axes.json and are read at runtime,

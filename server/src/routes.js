@@ -26,6 +26,8 @@ const {
   getStanceFilter,
   getStanceClusters,
   getPolling2026,
+  getResultsTimeline,
+  getResultsLive,
   getPositions,
   getPlacePhoto,
   getPollingPoints,
@@ -49,6 +51,13 @@ router.get("/capabilities", longCache, getCapabilities);
 router.get("/stats", longCache, getStats);
 // Issue positions: the menu, then who stands where on one of them.
 // Current locations, distinct from the historical 2012-2020 layer.
+// Election night. A 1-hour cache would be a lie on a count that moves every
+// few minutes, so these get a short one: enough to absorb a dashboard full of
+// clients, short enough that nobody reads a stale total as the live one.
+const liveCache = cacheMiddleware(20);
+router.get("/results-live/timeline", liveCache, getResultsTimeline);
+router.get("/results-live/latest", liveCache, getResultsLive);
+router.get("/results-live", liveCache, getResultsLive);
 router.get("/polling-2026", longCache, getPolling2026);
 // Outside spending: FEC independent expenditures for and against a
 // candidate. Spending only — the FEC never reports advertising creative.
