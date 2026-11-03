@@ -415,6 +415,16 @@ def stage_results(db, apply_writes, only_state=None):
 
     live = db["us_results_live"]
     changes = db["us_results_changes"]
+    # Per-candidate snapshots, one per contest per distinct source timestamp.
+    #
+    # us_results_changes is a SUMMARY log — it carries total_votes and who led,
+    # and nothing per candidate. That is enough to say the count grew, and not
+    # enough to replay the count. Reconstructing a candidate's votes at 21:40
+    # from a later state is not possible and must not be guessed, so the
+    # snapshot is written at observation time or the history simply does not
+    # exist. Keyed on contest + reported_at, so re-running against an
+    # unchanged source is a no-op rather than a duplicate frame.
+    snaps = db["us_results_snapshots"]
     run_at = now()
     wrote = stale = 0
     change_docs = []
@@ -470,6 +480,29 @@ def stage_results(db, apply_writes, only_state=None):
             if prev and not newer(as_of, prev.get("reported_at")):
                 stale += 1
                 continue
+
+            # Written before the live upsert, so a crash between the two
+            # leaves a recoverable frame rather than a gap in the replay.
+            if as_of:
+                snaps.update_one(
+                    {"_id": f"{_id}|{as_of}"},
+                    {"$setOnInsert": {
+                        "contest_id": _id, "cycle": CYCLE, "ocd_id": ocd_id,
+                        "state": abbv, "office": office, "district": district,
+                        "candidates": c["candidates"],
+                        "total_votes": c["total_votes"],
+                        "precincts_reporting": c["precincts_reporting"],
+                        "precincts_reporting_available":
+                            c["precincts_reporting_available"],
+                        "precincts_total": c["precincts_total"],
+                        "precincts_with_votes": c["precincts_with_votes"],
+                        "source_call": None,
+                        "reported_at": as_of,
+                        "source_url": entry["url"],
+                        "fetched_at": run_at,
+                    }},
+                    upsert=True,
+                )
 
             delta = diff(prev, doc)
             if delta:
