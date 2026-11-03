@@ -1,0 +1,134 @@
+{
+  "_comment": [
+    "Where live 2026 results come from, per state, and — just as important —",
+    "which states we probed and could NOT get. This is a data file rather than",
+    "code because the list changes on election night as states publish, and",
+    "because a reader of the dashboard deserves to know that an empty state",
+    "means 'we cannot read their feed', not 'nobody voted'.",
+    "",
+    "THERE IS NO FREE NATIONAL LIVE-RESULTS FEED. AP's Elections API is the",
+    "industry standard and is paid. Everything here is a per-state adapter,",
+    "because every state publishes differently, and most publish in a shape",
+    "built for a browser rather than for a program.",
+    "",
+    "status values:",
+    "  working              - parsed successfully, verified on last_verified",
+    "  awaiting_publication - endpoint is real, the 2026 file is not there yet",
+    "  blocked              - reachable but refuses automated clients",
+    "  spa_only             - a JavaScript app with no static feed we could find"
+  ],
+  "cycle": 2026,
+  "election_date": "2026-11-03",
+  "last_verified": "2026-11-03",
+  "adapters": {
+    "NC": {
+      "state": "North Carolina",
+      "status": "working",
+      "format": "zip containing tab-delimited txt, precinct level",
+      "url": "https://s3.amazonaws.com/dl.ncsbe.gov/ENRS/2026_11_03/results_pct_20261103.zip",
+      "as_of_from": "HTTP Last-Modified header",
+      "columns": [
+        "County", "Election Date", "Precinct", "Contest Group ID",
+        "Contest Type", "Contest Name", "Choice", "Choice Party",
+        "Vote For", "Election Day", "Early Voting", "Absentee by Mail",
+        "Provisional", "Total Votes", "Real Precinct"
+      ],
+      "notes": [
+        "141,467 precinct rows. Contest Type C = county, S = state/federal.",
+        "Carries votes broken out by mode, which most states do not.",
+        "Publishes NO explicit precincts-reporting count. We therefore record",
+        "precincts_with_votes and precincts_total and leave precincts_reporting",
+        "null: a precinct can legitimately report zero for one contest, so",
+        "counting non-zero precincts would overstate how complete a count is.",
+        "At 13:20 ET on election day the file is the pre-published ballot",
+        "template, every vote zero, Last-Modified 2026-10-05. That is the",
+        "correct answer before polls close, not a parse failure."
+      ],
+      "last_verified": "2026-11-03"
+    },
+    "VA": {
+      "state": "Virginia",
+      "status": "awaiting_publication",
+      "format": "csv directory",
+      "url": "https://apps.elections.virginia.gov/SBE_CSV/ELECTIONS/ELECTIONRESULTS/",
+      "notes": [
+        "The directory is real and returns 200, and Virginia documents a JSON",
+        "results file on its reporting site. Neither carries 2026 general data",
+        "yet — the listing is empty of 2026 files as of 2026-11-03 13:20 ET."
+      ],
+      "last_verified": "2026-11-03"
+    },
+    "GA": {
+      "state": "Georgia",
+      "status": "blocked",
+      "format": "Clarity Elections portal",
+      "url": "https://results.enr.clarityelections.com/GA/",
+      "notes": [
+        "Clarity is the vendor behind many states and counties, so solving it",
+        "once would unlock several. It sits behind an AWS WAF challenge:",
+        "HTTP 202, x-amzn-waf-action: challenge, zero-length body to any",
+        "plain HTTP client. It needs a real browser, which is out of scope",
+        "for this ingest and deliberately not worked around."
+      ],
+      "last_verified": "2026-11-03"
+    },
+    "MN": {
+      "state": "Minnesota",
+      "status": "spa_only",
+      "url": "https://electionresults.sos.mn.gov/",
+      "notes": [
+        "Single-page app with a catch-all route: every path returns the same",
+        "~15KB HTML with HTTP 200, including deliberately invented ones. Any",
+        "probe that looks like a working endpoint here is a false positive,",
+        "which is why each candidate path was tested against a nonsense",
+        "control before being believed."
+      ],
+      "last_verified": "2026-11-03"
+    },
+    "FL": {
+      "state": "Florida",
+      "status": "blocked",
+      "url": "https://flelectionfiles.floridados.gov/enightfilespublic/",
+      "notes": ["403 to automated clients, on both real and control paths."],
+      "last_verified": "2026-11-03"
+    },
+    "TX": {
+      "state": "Texas",
+      "status": "blocked",
+      "url": "https://results.texas-election.com/",
+      "notes": ["403 to automated clients."],
+      "last_verified": "2026-11-03"
+    },
+    "MD": {
+      "state": "Maryland",
+      "status": "awaiting_publication",
+      "url": "https://elections.maryland.gov/elections/2026/election_data/index.html",
+      "notes": [
+        "Index page is still templated — it literally contains the unreplaced",
+        "placeholder {*GENERAL_ELECTION_CODE*}. Only a precinct reference",
+        "spreadsheet is posted."
+      ],
+      "last_verified": "2026-11-03"
+    }
+  },
+  "early_vote": {
+    "source": "University of Florida Election Lab",
+    "page": "https://election.lab.ufl.edu/early-vote/2026-early-voting/",
+    "csv": "https://election.lab.ufl.edu/data-downloads/earlyvote/2026/US.csv",
+    "status": "working",
+    "notes": [
+      "The canonical national early-vote tracker. The page renders the CSV",
+      "client-side with PapaParse, so the CSV itself is the stable interface.",
+      "Each row carries its OWN last_update and the underlying state source,",
+      "which is what we store — UF aggregates states that report on different",
+      "days, so a single national 'as of' would be a fiction.",
+      "",
+      "ZERO DOES NOT MEAN ZERO. Where a state does not report a breakdown, UF",
+      "writes 0 rather than leaving it blank. Alaska reports 99,424 votes cast",
+      "and 0 Democrats, 0 Republicans — because Alaska does not report party",
+      "registration, not because no Democrat voted. Any breakdown whose parts",
+      "are all zero while the total is positive is stored as null."
+    ],
+    "last_verified": "2026-11-03"
+  }
+}
