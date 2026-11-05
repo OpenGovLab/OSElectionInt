@@ -384,7 +384,14 @@ def adapter_nc(entry):
                 cc["precincts"].add(precinct)
 
         total = i(cell(f, "Total Votes")) or 0
-        if total:
+        # Gated on `real` for the same reason the denominator is. North
+        # Carolina files absentee and provisional ballots under pseudo-
+        # precincts marked Real Precinct = N. Counting those in the numerator
+        # while excluding them from the total produced 76 of 215 county rows
+        # reporting more precincts voting than existing — Avery 21/19, Wake
+        # 235/216 — which reads as broken and makes a reader doubt the vote
+        # totals, which are exact.
+        if total and real:
             c["precincts_with_votes"].add(precinct)
             if cc is not None:
                 cc["precincts_with_votes"].add(precinct)
