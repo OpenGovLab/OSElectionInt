@@ -607,7 +607,24 @@ export default function USElectionPage({
    * voters turned out. Colorado reads -25.89 on that cut, and printing it
    * under a legend that says "D+40 ... R+40" would state something untrue.
    */
-  const isPrimary = year != null && yearTypes.get(year) === "primary";
+  /**
+   * Which 2026 cut is on screen.
+   *
+   * 2026 is the one cycle that has two, and they are different quantities:
+   * us_margins holds its PRIMARY turnout, while the general's returns live
+   * in a separate collection the margin archive knows nothing about. Before
+   * this existed the picker could only reach the primary, so two days after
+   * the election the app opened on months-old turnout labelled "not a
+   * result" while a complete North Carolina sat unreachable.
+   *
+   * Defaults to the general. A reader arriving now means this election.
+   */
+  const [cut2026, setCut2026] = useState<"general" | "primary">("general");
+  const isResultsCut = year === OPENING_CYCLE && cut2026 === "general";
+  const isPrimary = year != null && (
+    year === OPENING_CYCLE
+      ? cut2026 === "primary"
+      : yearTypes.get(year) === "primary");
   /**
    * The live cycle. 2026 is the one year whose general is being counted as
    * the page is open, so its scrubber steps across TONIGHT rather than
@@ -615,11 +632,17 @@ export default function USElectionPage({
    * so the mode retires by itself when a reader scrubs back to 2024.
    */
   const LIVE_CYCLE = 2026;
-  const isLiveCycle = year === LIVE_CYCLE;
+  // Tonight's clock axis belongs to the count. On the primary cut the cycle
+  // scrubber is the right control, so this follows the toggle too.
+  const isLiveCycle = year === LIVE_CYCLE && cut2026 === "general";
   const [liveCut, setLiveCut] = useState<LiveCut | null>(null);
   /** "2026 · PRIMARY · 9" for a picker row; generals keep their plain form. */
   const yearLabel = useCallback((y: number) => {
     const n = yearCounts.get(y);
+    // /years is built from us_margins, which holds 2026 only as a primary,
+    // so it would label the results cut "PRIMARY". The toggle beside the
+    // picker is what that cycle is actually showing.
+    if (y === OPENING_CYCLE) return `${y}`;
     const t = yearTypes.get(y) === "primary" ? " · PRIMARY" : "";
     return `${y}${t}${n ? ` · ${n}` : ""}`;
   }, [yearCounts, yearTypes]);
@@ -1899,7 +1922,10 @@ export default function USElectionPage({
    * cycle in this archive is a general.
    */
   const typeFor = useCallback(
-    (y: number) => yearTypes.get(y) ?? "general", [yearTypes]);
+    (y: number) => (y === OPENING_CYCLE
+      ? cut2026
+      : yearTypes.get(y) ?? "general"),
+    [yearTypes, cut2026]);
 
   // The type belongs in the cache key, not just the request. Keying on year
   // alone would let a cached general cut be repainted as a primary the
@@ -2084,24 +2110,53 @@ export default function USElectionPage({
     return () => { alive = false; };
   }, [ready]);
 
-  // ── fetch margins and push them in as feature state ──────────────────────
+  // ── fetch the cut and push it in as feature state ───────────────────────
+  //
+  // Two sources, one paint. Certified history comes from us_margins; the
+  // 2026 general comes from the returns we scrape, which that archive will
+  // not hold for weeks. They share the fill expression because a signed
+  // D<->R margin means the same thing in both, and the server signs the
+  // results margin to the same convention — negative Democratic.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready || !year) return;
     let alive = true;
     setLoading(true);
-    fetchCut(year)
+
+    const load = isResultsCut
+      ? apiService({
+        method: "get",
+        url: `/us-election/results-map?office=${office}&level=${level}`,
+      }).then((r) => {
+        const rows = (r as { data?: { data?: { rows?: {
+          ocd_id: string; margin: number | null; leader_party: string | null;
+          total_votes: number;
+        }[] } } })?.data?.data?.rows ?? [];
+        // Into the shape the fill and the hover already speak. A row whose
+        // leader is neither major party arrives with margin null and stays
+        // unpainted — the two-party ramp cannot place it, and guessing a
+        // side would be worse than leaving it blank.
+        return rows.map((r2) => ({
+          ocd_id: r2.ocd_id,
+          margin: r2.margin,
+          winner_party: r2.leader_party ?? "",
+          total: r2.total_votes,
+          major_share: 1,
+        })) as MarginRow[];
+      })
+      : fetchCut(year);
+
+    load
       .then((list) => {
         if (!alive) return;
         paintCut(list);
-        const m = new Map(list.map((x) => [x.ocd_id, x]));
-        void m;
         refreshRows(level);
       })
       .catch(() => { if (alive) setMargins(new Map()); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [level, office, year, ready, refreshRows, styleEpoch]);
+  }, [level, office, year, ready, refreshRows, styleEpoch, isResultsCut,
+      fetchCut, paintCut]);
 
   // ── layer visibility ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -2662,6 +2717,32 @@ export default function USElectionPage({
             ))}
           </select>
         )}
+        {/* Which 2026 cut. Only 2026 has two, so the control only exists
+            there rather than sitting inert beside every other cycle. */}
+        {year === OPENING_CYCLE && (
+          <div className="ml-1 flex overflow-hidden rounded-[4px] border border-white/10 backdrop-blur">
+            {([["general", "Results"], ["primary", "Primary"]] as const).map(
+              ([v, lbl]) => (
+                <button
+                  key={v}
+                  onClick={() => setCut2026(v)}
+                  title={v === "general"
+                    ? "Unofficial returns from each state's own feed"
+                    : "Ballots cast in each party's primary — turnout, not a result"}
+                  className={`px-2 py-1.5 font-mono text-[10px] uppercase tracking-wider transition-colors ${
+                    cut2026 === v
+                      ? v === "general"
+                        ? "bg-emerald-400/20 text-emerald-200"
+                        : "bg-amber-400/20 text-amber-200"
+                      : "bg-slate-900/80 text-slate-500 hover:text-slate-300"
+                  }`}
+                >
+                  {lbl}
+                </button>
+              ))}
+          </div>
+        )}
+
         {/* mobile toggle for the sidebar tools */}
         <button
           onClick={() => setToolsOpen((o) => !o)}
@@ -3710,7 +3791,14 @@ export default function USElectionPage({
           is ever mounted — two playback controls on screen at once would
           leave a reader unsure which axis the map is moving along. */}
       {isLiveCycle && (
-        <LiveResults office={office} level={level} onCut={setLiveCut} />
+        // `level` is deliberately NOT passed. It is the map's display level,
+        // and us_results_live is keyed on each contest's own division — a
+        // Senate race at state, a House race at cd, never at county. Sending
+        // level=county filtered every row out, so the bar reported "0
+        // contests · 0 votes counted" against fifteen contests and 8.4m
+        // votes. How many contests are reporting is a national fact; it does
+        // not change because the reader zoomed into counties.
+        <LiveResults office={office} onCut={setLiveCut} />
       )}
 
       {/* timeline scrubber */}
@@ -3789,11 +3877,17 @@ export default function USElectionPage({
             party contests as though they were a contest between parties. */}
         <div className="mb-1 flex items-center gap-1.5">
           <span className="font-semibold text-slate-700 dark:text-slate-200">
-            {isPrimary ? "Primary turnout" : "Margin"}
+            {isPrimary ? "Primary turnout"
+              : isResultsCut ? "Who leads" : "Margin"}
           </span>
           {isPrimary && (
             <span className="rounded-sm bg-amber-500/20 px-1 font-mono text-[9px] font-semibold tracking-wide text-amber-700 dark:text-amber-300">
               {year} PRIMARY
+            </span>
+          )}
+          {isResultsCut && (
+            <span className="rounded-sm bg-emerald-500/20 px-1 font-mono text-[9px] font-semibold tracking-wide text-emerald-700 dark:text-emerald-300">
+              UNOFFICIAL
             </span>
           )}
         </div>
@@ -3806,9 +3900,17 @@ export default function USElectionPage({
         </div>
         {isPrimary && (
           <p className="mt-1 max-w-[17rem] text-[9px] leading-snug text-amber-700 dark:text-amber-400/90">
-            Ballots cast in each party&rsquo;s primary, not a result. It says
-            which party&rsquo;s voters turned out — the general has not
-            happened, and primary turnout does not predict it.
+            Turnout in each party&rsquo;s primary — not a result.
+          </p>
+        )}
+        {/* A results map should say what the colour means and stop. The
+            qualification a reader needs — that nothing is called and the
+            count is unofficial — rides on the chip above and in the panel,
+            not in a paragraph under the key. */}
+        {isResultsCut && (
+          <p className="mt-1 max-w-[17rem] text-[9px] leading-snug text-slate-500 dark:text-slate-400">
+            Margin between the two leading candidates. Unpainted means we hold
+            no count there.
           </p>
         )}
 
@@ -3984,7 +4086,14 @@ export default function USElectionPage({
               <span className="block text-[11px] text-slate-500 dark:text-slate-400">
                 {loading ? "loading results…"
                   : withData > 0 ? `${withData.toLocaleString()} with ${year} ${isPrimary ? "primary turnout" : "results"} · closest first`
-                  : `no ${year ?? ""} results at this level`}
+                  // Coverage is one state, and will be for a while. "No
+                  // results at this level" reads as a broken app; the truth
+                  // is that counting is still being published and we read it
+                  // from each state directly, so most of the map is simply
+                  // not in yet.
+                  : isResultsCut
+                    ? "returns still coming in — we read each state's own feed"
+                    : `no ${year ?? ""} results at this level`}
               </span>
               {upNext > 0 && (
                 <span className="mt-1 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-900 dark:bg-amber-950 dark:text-amber-300">

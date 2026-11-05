@@ -1531,6 +1531,69 @@ async function resultsCounty({ state, office, cycle, limit }) {
   return out;
 }
 
+/**
+ * One row per division, ready to push straight in as map feature-state.
+ *
+ * The choropleth paints from a single signed `margin` on the D<->R ramp, and
+ * until now the only thing that could supply it was us_margins — certified
+ * history. So two days after an election the map was structurally unable to
+ * show the election: a complete, reconciled North Carolina sat in a side
+ * panel the fill could not read. This is the join that was missing.
+ *
+ * The sign convention is us_margins': negative Democratic, positive
+ * Republican. resultsCounty returns margin_pct as leader-minus-runner-up,
+ * which is always positive, so it has to be signed by the leader's party
+ * here rather than in the client.
+ *
+ * A contest led by neither major party returns margin null. That is not a
+ * gap — the diverging D<->R ramp genuinely cannot express an independent
+ * lead, and painting one somewhere on a two-party axis would place it on a
+ * side it is not on. The row still comes back carrying its leader, so a
+ * caller can list it even though the fill leaves it blank.
+ */
+async function resultsMap({ office, level, cycle, limit }) {
+  const q = { cycle };
+  if (office) q.office = office;
+
+  // County asks the county tier; everything else is the contest's own
+  // division, which is what us_results_live is keyed on.
+  const coll = level === "county" ? TABLES.resultsCounty : TABLES.resultsLive;
+  const rows = await M(coll).find(q).limit(limit).lean();
+
+  const out = [];
+  for (const r of rows) {
+    const cands = [...(r.candidates ?? [])].sort(
+      (a, b) => (b.votes ?? 0) - (a.votes ?? 0),
+    );
+    const lead = r.leader ?? cands[0] ?? null;
+    const runner = cands.find((c) => c.name !== lead?.name) ?? null;
+    if (!lead) continue;
+
+    const spread = r.margin_pct != null
+      ? r.margin_pct
+      : lead.percent != null && runner?.percent != null
+        ? Math.round((lead.percent - runner.percent) * 100) / 100
+        : null;
+
+    const party = lead.party ?? null;
+    const signed = spread == null || (party !== "DEM" && party !== "REP")
+      ? null
+      : (party === "DEM" ? -spread : spread);
+
+    out.push({
+      ocd_id: r.ocd_id,
+      office: r.office,
+      district: r.district ?? null,
+      margin: signed,
+      leader_party: party,
+      leader_name: lead.name ?? null,
+      total_votes: r.total_votes ?? 0,
+      reported_at: r.reported_at ?? null,
+    });
+  }
+  return out;
+}
+
 async function voterInfo(state) {
   return M(TABLES.voterInfo).collection.findOne({ _id: state });
 }
@@ -1970,6 +2033,7 @@ module.exports = {
   resultsLatest,
   resultsForDivision,
   resultsCounty,
+  resultsMap,
   issueCategories,
   positionsForDivision,
   positionsByIssue,

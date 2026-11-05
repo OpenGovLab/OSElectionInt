@@ -635,6 +635,60 @@ exports.getResultsCounty = async (req, res) => {
   }
 };
 
+/**
+ * GET /api/us-election/results-map?office=&level=&limit=
+ *
+ * One row per division, shaped for map feature-state: a signed margin on
+ * the same D<->R axis the choropleth already paints, plus who leads.
+ *
+ * Exists because the fill could previously only be driven by us_margins,
+ * so the map could show certified history and nothing else — including on
+ * the days when the current election is the only thing anyone wants.
+ *
+ * A division we hold no count for is simply absent. The client leaves it
+ * unpainted, which is what absence already means everywhere else here; a
+ * neutral fill would read as a tie.
+ */
+exports.getResultsMap = async (req, res) => {
+  try {
+    const office = req.query.office ? String(req.query.office) : null;
+    const level = req.query.level ? String(req.query.level) : "county";
+    if (office && !OFFICES.includes(office)) {
+      return res.status(400).json({
+        success: false, message: `office must be one of ${OFFICES}`,
+      });
+    }
+    if (!LEVELS.includes(level)) {
+      return res.status(400).json({
+        success: false, message: `level must be one of ${LEVELS}`,
+      });
+    }
+    const limit = clampInt(req.query.limit, 4000, 1, 8000);
+    const rows = await repo.resultsMap({
+      office, level, cycle: LIVE_CYCLE, limit,
+    });
+    const painted = rows.filter((r) => r.margin != null).length;
+    res.json({
+      success: true,
+      data: {
+        count: rows.length,
+        // Rows we return but cannot place on a two-party ramp, because
+        // neither major party leads them. Surfaced so a caller can say so
+        // rather than quietly showing fewer divisions than it fetched.
+        paintable: painted,
+        rows,
+        office,
+        level,
+        cycle: LIVE_CYCLE,
+        clock: "source reported_at",
+        caveat: LIVE_CAVEAT,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 exports.getPolling2026 = async (req, res) => {
   try {
     const limit = clampInt(req.query.limit, 500, 1, 2000);

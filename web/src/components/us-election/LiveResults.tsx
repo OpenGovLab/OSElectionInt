@@ -42,11 +42,18 @@ function PollsOpenNotice({ states }: { states: string[] }) {
 }
 
 export default function LiveResults({
-  office, level, onCut,
+  office, onCut,
 }: {
   office: string;
-  level: string;
-  /** Hands the active cut up so the map and this control cannot disagree. */
+  /**
+   * Hands the active cut up so the map and this control cannot disagree.
+   *
+   * There is deliberately no `level`. us_results_live is keyed on each
+   * contest's OWN division — a Senate race at state, a House race at cd —
+   * so filtering it by the map's display level matched nothing the moment a
+   * reader looked at counties, and the bar reported zero contests against
+   * fifteen. The count of contests reporting is not a property of the zoom.
+   */
   onCut?: (cut: LiveCut | null) => void;
 }) {
   const [tl, setTl] = useState<LiveTimeline | null>(null);
@@ -78,11 +85,11 @@ export default function LiveResults({
   const loadCut = useCallback((i: number, atLive: boolean) => {
     const at = buckets[i]?.at ?? null;
     // The present carries candidate detail; a past moment cannot.
-    fetchLiveCut(atLive ? null : at, office, level).then((c) => {
+    fetchLiveCut(atLive ? null : at, office).then((c) => {
       setCut(c);
       onCut?.(c);
     });
-  }, [buckets, office, level, onCut]);
+  }, [buckets, office, onCut]);
 
   useEffect(() => {
     if (!buckets.length) { setCut(null); onCut?.(null); return; }
@@ -167,7 +174,8 @@ export default function LiveResults({
         </span>
         <span>·</span>
         <span className="tabular-nums">
-          {(cut?.count ?? 0).toLocaleString()} contests
+          {(cut?.count ?? 0).toLocaleString()}
+          {(cut?.count ?? 0) === 1 ? " contest" : " contests"}
         </span>
         <span>·</span>
         <span className="tabular-nums">{totalVotes.toLocaleString()} votes counted</span>

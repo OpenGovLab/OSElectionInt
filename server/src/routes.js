@@ -33,6 +33,7 @@ const {
   getResultsTimeline,
   getResultsLive,
   getResultsCounty,
+  getResultsMap,
   getPositions,
   getPlacePhoto,
   getPollingPoints,
@@ -65,6 +66,8 @@ router.get("/results-live/latest", liveCache, getResultsLive);
 router.get("/results-live", liveCache, getResultsLive);
 // The count one tier down, and every contest a division took part in.
 router.get("/results-county", liveCache, getResultsCounty);
+// One row per division, shaped to push straight into map feature-state.
+router.get("/results-map", liveCache, getResultsMap);
 router.get("/polling-2026", longCache, getPolling2026);
 // Outside spending: FEC independent expenditures for and against a
 // candidate. Spending only — the FEC never reports advertising creative.
