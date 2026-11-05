@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { apiService } from "@/lib/api";
+import { electionHasPassed } from "@/lib/countyResults";
 
 /**
  * How to vote where you are looking.
@@ -108,25 +109,41 @@ function checkedOn(iso?: string | null): string | null {
     : d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
-/** A rule shown in full, with the source it came from. */
+/**
+ * A rule shown in full, with the source it came from.
+ *
+ * `tone="lead"` is the emphasis a live deadline earns. Once the election it
+ * governs has been held, a deadline is reference and must not keep the
+ * styling of an instruction — so `passed` strips the emphasis and marks it,
+ * rather than the panel quietly telling someone to register for an election
+ * that already happened.
+ */
 function Rule({
-  icon, label, text, sourceUrl, tone = "normal",
+  icon, label, text, sourceUrl, tone = "normal", passed = false,
 }: {
   icon: JSX.Element;
   label: string;
   text: string;
   sourceUrl?: string | null;
   tone?: "normal" | "lead";
+  passed?: boolean;
 }) {
   return (
-    <div className={tone === "lead"
+    <div className={tone === "lead" && !passed
       ? "rounded-md border border-emerald-600/25 bg-white/60 px-2.5 py-2 dark:border-emerald-400/20 dark:bg-emerald-950/40"
       : "px-0.5 py-1.5"}>
-      <div className="flex items-center gap-1.5 text-emerald-800 dark:text-emerald-300">
+      <div className={`flex items-center gap-1.5 ${passed
+        ? "text-slate-500 dark:text-slate-400"
+        : "text-emerald-800 dark:text-emerald-300"}`}>
         {icon}
         <span className="font-mono text-[9px] font-bold uppercase tracking-[0.16em]">
           {label}
         </span>
+        {passed && (
+          <span className="rounded-[3px] bg-slate-500/15 px-1 font-mono text-[8px] font-bold uppercase tracking-[0.1em] text-slate-500 dark:text-slate-400">
+            2026 general · passed
+          </span>
+        )}
         {sourceUrl && (
           <a
             href={sourceUrl}
@@ -225,6 +242,18 @@ export default function VoterInfo({ ocdId }: { ocdId: string }) {
   const early = office.early_voting ?? null;
   const id = office.voter_id ?? null;
   const checked = checkedOn(office.enriched_at || office.checked_at);
+  // Derived from the clock, never hardcoded, so this panel reframes itself
+  // the day after an election instead of shipping stale guidance.
+  const passed = electionHasPassed();
+
+  // After the election the useful action inverts. Nobody needs the
+  // registration deadline any more; they want to know whether the ballot
+  // they returned was accepted — so the tracker takes the solid treatment
+  // and the office link steps back to the outline.
+  const primaryBtn =
+    "inline-flex items-center gap-1.5 rounded-[4px] bg-emerald-600 px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-white transition-colors hover:bg-emerald-500";
+  const secondaryBtn =
+    "inline-flex items-center gap-1.5 rounded-[4px] border border-emerald-600/50 px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-emerald-800 transition-colors hover:bg-emerald-600/10 dark:text-emerald-300";
 
   return (
     <section className="mb-4 rounded-xl border border-emerald-600/25 bg-emerald-50/70 px-3 py-2.5 dark:border-emerald-400/20 dark:bg-emerald-950/30">
@@ -232,27 +261,49 @@ export default function VoterInfo({ ocdId }: { ocdId: string }) {
         Voting in {office.name}
       </h3>
 
+      {/* Says plainly which election the rules below belong to. Without this
+          a reader two days after the general reads a passed deadline as
+          something they can still act on. */}
+      {passed && (
+        <p className="mt-1 text-[10px] leading-relaxed text-slate-600 dark:text-slate-400">
+          The 2026 general election was held on 3 November. The deadlines
+          below applied to it and are kept for reference — the links are
+          still live, and the ballot tracker is the one to use now.
+        </p>
+      )}
+
       {/* The authority, kept at the top and always visible. Everything below
           is a compiled summary; these two are the real answer. */}
       {(officeUrl || tracker) && (
         <div className="mt-1.5 flex flex-wrap gap-1.5">
+          {tracker && passed && (
+            <a
+              href={tracker}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={primaryBtn}
+            >
+              {ICON.tracker}
+              Track your ballot
+            </a>
+          )}
           {officeUrl && (
             <a
               href={officeUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 rounded-[4px] bg-emerald-600 px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-white transition-colors hover:bg-emerald-500"
+              className={passed ? secondaryBtn : primaryBtn}
             >
               {ICON.office}
-              Check your registration
+              {passed ? "State election office" : "Check your registration"}
             </a>
           )}
-          {tracker && (
+          {tracker && !passed && (
             <a
               href={tracker}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 rounded-[4px] border border-emerald-600/50 px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-emerald-800 transition-colors hover:bg-emerald-600/10 dark:text-emerald-300"
+              className={secondaryBtn}
             >
               {ICON.tracker}
               Track your ballot
@@ -269,6 +320,7 @@ export default function VoterInfo({ ocdId }: { ocdId: string }) {
               tone="lead"
               icon={ICON.calendar}
               label="Register by"
+              passed={passed}
               text={reg.deadlines}
               sourceUrl={reg.source_url}
             />
@@ -287,6 +339,7 @@ export default function VoterInfo({ ocdId }: { ocdId: string }) {
             <Rule
               icon={ICON.calendar}
               label="If you miss the deadline"
+              passed={passed}
               text={reg.election_day_registration}
               sourceUrl={reg.source_url}
             />
@@ -296,6 +349,7 @@ export default function VoterInfo({ ocdId }: { ocdId: string }) {
               tone="lead"
               icon={ICON.mail}
               label="Request a mail ballot by"
+              passed={passed}
               text={mail.application_deadline}
               sourceUrl={mail.source_url}
             />
@@ -305,6 +359,7 @@ export default function VoterInfo({ ocdId }: { ocdId: string }) {
               tone="lead"
               icon={ICON.mail}
               label="Return your mail ballot by"
+              passed={passed}
               text={mail.ballot_due}
               sourceUrl={mail.source_url}
             />

@@ -82,6 +82,11 @@ import {
   type ProjectionKey,
   skyFor,
 } from "@/config/usElectionBasemaps";
+import {
+  type CountyContest as SharedCountyContest,
+  officeLabel as countyOfficeLabel,
+  precinctLabel,
+} from "@/lib/countyResults";
 import { useIsDark } from "@/lib/theme";
 import { apiService } from "@/lib/api";
 import LiveResults from "@/components/us-election/LiveResults";
@@ -169,28 +174,7 @@ interface EarlyVote {
  * publishes no denominator — so completeness is unknown and is never
  * rendered as a percentage.
  */
-interface CountyContest {
-  ocd_id: string;
-  county_name: string | null;
-  state: string;
-  office: string;
-  district: number | null;
-  tier: "county" | "contest";
-  statewide: boolean;
-  candidates: { name: string; party: string | null; votes: number;
-    percent: number | null }[];
-  total_votes: number;
-  leader: { name: string; party: string | null; votes: number;
-    percent: number | null } | null;
-  margin_votes: number | null;
-  margin_pct: number | null;
-  precincts_reporting: number | null;
-  precincts_reporting_available: boolean;
-  precincts_total: number | null;
-  precincts_with_votes: number | null;
-  reported_at: string | null;
-  source: string | null;
-}
+type CountyContest = SharedCountyContest;
 
 /** The contest happening now, as /race-2026 returns it per division. */
 interface RaceIncumbent {
@@ -3113,10 +3097,9 @@ export default function USElectionPage({
                 {hoverInfo.counted.slice(0, 4).map((ct) => {
                   const L = ct.leader;
                   const runner = ct.candidates[1];
-                  const label = ct.office === "us_senate" ? "U.S. Senate"
-                    : ct.office === "us_house"
-                      ? `U.S. House ${ct.district ?? ""}`.trim()
-                      : ct.office === "governor" ? "Governor" : ct.office;
+                  // Shared with the click panel so the two surfaces cannot
+                  // label the same contest differently.
+                  const label = countyOfficeLabel(ct.office, ct.district);
                   return (
                     <div key={`${ct.office}-${ct.district ?? "-"}`} className="mb-1.5 last:mb-0">
                       <div className="flex items-baseline justify-between gap-2">
@@ -3167,8 +3150,7 @@ export default function USElectionPage({
                         <div className="font-mono text-[9px] text-slate-500">
                           margin {ct.margin_votes.toLocaleString()}
                           {ct.margin_pct != null && ` · ${ct.margin_pct} pts`}
-                          {ct.precincts_with_votes != null && ct.precincts_total != null
-                            && ` · ${ct.precincts_with_votes}/${ct.precincts_total} precincts with votes`}
+                          {precinctLabel(ct) && ` · ${precinctLabel(ct)}`}
                         </div>
                       )}
                     </div>

@@ -2,6 +2,16 @@ import { useEffect, useState } from "react";
 
 import { marginLabel, moneyLabel } from "@/config/usElectionMap";
 import { apiService } from "@/lib/api";
+import {
+  COUNT_CAVEAT,
+  type CountyContest,
+  fetchCountyResults,
+  NO_COUNT_NOTE,
+  officeLabel,
+  partyDot,
+  precinctLabel,
+  reportedLabel,
+} from "@/lib/countyResults";
 
 import PersonLinks, { type Social } from "./PersonLinks";
 import PersonPositions from "@/components/us-election/PersonPositions";
@@ -982,6 +992,116 @@ function WhosRunning({
   );
 }
 
+/**
+ * What the count says here — the panel's headline now that polls have closed.
+ *
+ * Every candidate is listed, not just the top two the hover has room for:
+ * this is the surface a reader opened deliberately, and "winners and losers"
+ * means showing the losers too.
+ *
+ * The language is "leads", never "won". North Carolina publishes no
+ * precincts-reporting denominator, so `precincts_with_votes` is printed as
+ * itself and never turned into a percent complete — a precinct can return a
+ * legitimate zero in one contest while having fully reported.
+ */
+function TheCount({ ocdId }: { ocdId: string }) {
+  const [rows, setRows] = useState<CountyContest[] | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    setRows(null);
+    fetchCountyResults(ocdId).then((r) => { if (alive) setRows(r); });
+    return () => { alive = false; };
+  }, [ocdId]);
+
+  // Null is "still asking" and must not flash the no-count note at a reader
+  // who is about to get a result.
+  if (rows === null) return null;
+
+  if (!rows.length) {
+    return (
+      <section className="mb-4 rounded-xl border border-white/10 bg-slate-500/5 px-3 py-2.5">
+        <h3 className="font-mono text-[9px] font-bold uppercase tracking-[0.18em] text-slate-400">
+          The count
+        </h3>
+        <p className="mt-1 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+          {NO_COUNT_NOTE}
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="mb-4 rounded-xl border border-emerald-600/25 bg-emerald-500/[0.06] px-3 py-2.5 dark:border-emerald-400/20">
+      <div className="flex items-baseline justify-between gap-2">
+        <h3 className="font-mono text-[9px] font-bold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300">
+          The count
+        </h3>
+        <span className="shrink-0 font-mono text-[9px] tabular-nums text-slate-500">
+          {reportedLabel(rows[0].reported_at)}
+        </span>
+      </div>
+
+      {rows.map((ct) => (
+        <div
+          key={`${ct.office}-${ct.district ?? "-"}`}
+          className="mt-2 border-t border-emerald-700/15 pt-1.5 first:border-0 dark:border-emerald-400/10"
+        >
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">
+              {officeLabel(ct.office, ct.district)}
+              {ct.statewide && (
+                <span className="ml-1 text-emerald-600 dark:text-emerald-400/70">
+                  statewide
+                </span>
+              )}
+            </span>
+            <span className="shrink-0 font-mono text-[9px] tabular-nums text-slate-500">
+              {ct.total_votes.toLocaleString()} counted
+            </span>
+          </div>
+
+          {/* Everyone on the ballot, in order. The reader clicked through for
+              the full field, and a third-party total is part of the story of
+              a close race. */}
+          {ct.candidates.map((c, i) => (
+            <div
+              key={`${c.name}-${c.party ?? ""}`}
+              className={`flex items-baseline justify-between gap-2 ${
+                i === 0 ? "" : "opacity-75"}`}
+            >
+              <span className="min-w-0 truncate text-[11px] text-slate-800 dark:text-slate-100">
+                <span className={`mr-1 inline-block h-1.5 w-1.5 rounded-full align-middle ${partyDot(c.party)}`} />
+                {c.name}
+                {i === 0 && <span className="ml-1 text-slate-500">leads</span>}
+              </span>
+              <span className="shrink-0 font-mono text-[10px] tabular-nums text-slate-600 dark:text-slate-300">
+                {c.votes.toLocaleString()}
+                {c.percent != null && (
+                  <span className="ml-1 text-slate-500">{c.percent}%</span>
+                )}
+              </span>
+            </div>
+          ))}
+
+          {ct.margin_votes != null && (
+            <div className="mt-0.5 font-mono text-[9px] text-slate-500">
+              margin {ct.margin_votes.toLocaleString()}
+              {ct.margin_pct != null && ` · ${ct.margin_pct} pts`}
+              {precinctLabel(ct) && ` · ${precinctLabel(ct)}`}
+            </div>
+          )}
+        </div>
+      ))}
+
+      <p className="mt-2 border-t border-emerald-700/15 pt-1.5 text-[9px] leading-relaxed text-emerald-900/60 dark:border-emerald-400/10 dark:text-emerald-200/50">
+        {COUNT_CAVEAT}
+        {rows[0].source ? ` Source: ${rows[0].source}.` : ""}
+      </p>
+    </section>
+  );
+}
+
 export default function DivisionDetail({
   ocdId, name, onBack, onSelectPerson, onSelectCandidate,
 }: {
@@ -1065,6 +1185,12 @@ export default function DivisionDetail({
 
         {!loading && !err && (
           <>
+            {/* The count leads. Polls have closed, so who is ahead and by how
+                much beats both the forward-looking field below it and the
+                voter guidance further down, which is now reference rather
+                than instruction. */}
+            <TheCount ocdId={ocdId} />
+
             <WhosRunning
               fields={fields}
               roster={roster}
