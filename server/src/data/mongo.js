@@ -185,7 +185,13 @@ async function race2026({ office, level }) {
   const candQ = { cycle: CYCLE };
   if (office) candQ.office = office;
 
-  const [holders, cands, rosters] = await Promise.all([
+  // Results we actually hold for this cycle. A SEPARATE collection from
+  // us_margins (certified history) and from the Ballotpedia scrape: three
+  // sources that should be compared, never merged. Today it is one state.
+  const resultQ = { cycle: CYCLE };
+  if (office) resultQ.office = office;
+
+  const [holders, cands, rosters, results] = await Promise.all([
     M(TABLES.officeholders).find(holderQ, {
       _id: 0, ocd_id: 1, office: 1, state: 1, district: 1, name: 1, party: 1,
       next_election: 1, senate_class: 1, photo: 1, bioguide: 1, fec_ids: 1,
@@ -196,7 +202,53 @@ async function race2026({ office, level }) {
       election_yr: 1,
     }).lean(),
     M(TABLES.raceRoster).find({ cycle: CYCLE }).lean().catch(() => []),
+    M(TABLES.resultsLive).find(resultQ, {
+      _id: 0, ocd_id: 1, office: 1, district: 1, candidates: 1,
+      total_votes: 1, precincts_reporting: 1, precincts_total: 1,
+      precincts_reporting_available: 1, source_call: 1, reported_at: 1,
+      source: 1, source_url: 1,
+    }).lean().catch(() => []),
   ]);
+
+  /**
+   * The count we hold, keyed by division.
+   *
+   * `leader` is deliberately not called a winner. We have no precinct
+   * denominator for the one state that reports (North Carolina publishes
+   * none), so completeness is unknown, and nothing here is permitted to
+   * imply a race is decided. `source_call` carries a call only when the
+   * SOURCE states one, attributed to them.
+   */
+  const resultByDivision = new Map();
+  for (const r of results) {
+    const ranked = (r.candidates ?? [])
+      .slice()
+      .sort((a, b) => (b.votes ?? 0) - (a.votes ?? 0));
+    const lead = ranked[0] ?? null;
+    const second = ranked[1] ?? null;
+    resultByDivision.set(`${r.ocd_id}|${r.district ?? "-"}`, {
+      leader: lead
+        ? {
+          name: lead.name, party: lead.party ?? null,
+          votes: lead.votes ?? 0, percent: lead.percent ?? null,
+        }
+        : null,
+      runner_up: second
+        ? {
+          name: second.name, party: second.party ?? null,
+          votes: second.votes ?? 0, percent: second.percent ?? null,
+        }
+        : null,
+      total_votes: r.total_votes ?? 0,
+      precincts_reporting: r.precincts_reporting ?? null,
+      precincts_total: r.precincts_total ?? null,
+      precincts_reporting_available: r.precincts_reporting_available ?? false,
+      source_call: r.source_call ?? null,
+      reported_at: r.reported_at ?? null,
+      source: r.source ?? null,
+      source_url: r.source_url ?? null,
+    });
+  }
 
   // election_yr is certified and is the only thing that knows Cruz's 2026
   // committee is raising for 2030. Absent means "no reason to exclude".
@@ -298,12 +350,61 @@ async function race2026({ office, level }) {
       && incumbentFilings.length === 0
       && divCands.some((c) => c.status === "open seat");
 
+    const district = divHolders[0]?.district ?? divCands[0]?.district ?? null;
+    const result = resultByDivision.get(`${ocdId}|${district ?? "-"}`) ?? null;
+    const seatUp = seats.some((s) => s.seat_up)
+      || (!seats.length && !!divCands.length);
+
+    /**
+     * Seat change, before and after — and what we are entitled to say.
+     *
+     * The pre-election half is complete: we hold every sitting member. The
+     * post-election half is one state. So `status` distinguishes the two
+     * reasons a seat might show no change — it is not on the ballot, or we
+     * simply have no count — because collapsing those would render an
+     * unknown result as the incumbent holding on, which is the worst
+     * available error here.
+     *
+     * `leading_differs` is a comparison of parties in a count of unknown
+     * completeness, NOT a flip. North Carolina publishes no precinct
+     * denominator, so there is no honest way to say how final any of this
+     * is, and the words "won", "gain" and "flipped" are therefore not used.
+     * A call appears only when the source itself states one, attributed.
+     */
+    const preParty = upSeat?.incumbent?.party ?? null;
+    const leadParty = result?.leader?.party ?? null;
+    const changeStatus = !seatUp ? "not_up"
+      : !result ? "no_result"
+        : result.source_call ? "called_by_source"
+          : "counting";
+    const seatChange = {
+      status: changeStatus,
+      pre_party: preParty,
+      pre_name: upSeat?.incumbent?.name ?? null,
+      open_seat: (!!upSeat && upSeat.incumbent.running === false) || fecSaysOpen,
+      leading_party: leadParty,
+      leading_name: result?.leader?.name ?? null,
+      // null, not false, where there is nothing to compare — absence of a
+      // count is not evidence the seat stayed put.
+      leading_differs: (preParty && leadParty) ? leadParty !== preParty : null,
+      note: changeStatus === "not_up"
+        ? "This seat is not on the 2026 ballot."
+        : changeStatus === "no_result"
+          ? "Result not yet available — we hold no count for this contest."
+          : changeStatus === "counting"
+            ? "Leading in the count we hold. Not a called race, and "
+              + "completeness is unknown."
+            : "Called by the source, not by us.",
+    };
+
     rows.push({
       ocd_id: ocdId,
       office: office ?? divHolders[0]?.office ?? divCands[0]?.office ?? null,
       state,
-      district: divHolders[0]?.district ?? divCands[0]?.district ?? null,
-      seat_up: seats.some((s) => s.seat_up) || (!seats.length && !!divCands.length),
+      district,
+      result,
+      seat_change: seatChange,
+      seat_up: seatUp,
       open_seat: (!!upSeat && upSeat.incumbent.running === false) || fecSaysOpen,
       open_seat_source: (!!upSeat && upSeat.incumbent.running === false)
         ? "roster" : fecSaysOpen ? "fec" : null,

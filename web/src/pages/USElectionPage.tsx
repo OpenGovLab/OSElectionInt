@@ -187,6 +187,33 @@ interface Race2026 {
   } | null;
   seats: RaceSeat[];
   roster_source: string | null;
+  result: RaceResult | null;
+  seat_change: SeatChange;
+}
+
+/** The count we hold for a contest. Never a winner — see seat_change. */
+interface RaceResult {
+  leader: { name: string; party: string | null; votes: number; percent: number | null } | null;
+  runner_up: { name: string; party: string | null; votes: number; percent: number | null } | null;
+  total_votes: number;
+  precincts_reporting: number | null;
+  precincts_total: number | null;
+  precincts_reporting_available: boolean;
+  source_call: unknown | null;
+  reported_at: string | null;
+  source: string | null;
+  source_url: string | null;
+}
+
+interface SeatChange {
+  status: "not_up" | "no_result" | "counting" | "called_by_source";
+  pre_party: string | null;
+  pre_name: string | null;
+  open_seat: boolean;
+  leading_party: string | null;
+  leading_name: string | null;
+  leading_differs: boolean | null;
+  note: string;
 }
 
 interface TopCandidate {
@@ -201,6 +228,9 @@ interface TopRow {
   ocd_id: string;
   top: TopCandidate[];
 }
+
+/** The cycle the app opens on when we hold any cut of it. */
+const OPENING_CYCLE = 2026;
 
 const US_BOUNDS: [number, number, number, number] = [-125, 24.4, -66.5, 49.4];
 
@@ -364,11 +394,17 @@ export default function USElectionPage({
   // The pmtiles Protocol instance, kept so a basemap swap can replace it.
   const protocolRef = useRef<Protocol | null>(null);
 
-  const [office, setOffice] = useState<OfficeId>("president");
-  const [level, setLevel] = useState<DivisionLevel>("state");
+  // Opens on the contest people are actually here for. The cycle default is
+  // handled in the years effect, which has to see the available cuts first.
+  const [office, setOffice] = useState<OfficeId>("us_senate");
+  const [level, setLevel] = useState<DivisionLevel>("county");
   // Zoom drives the level unless the reader picks one — the map should reveal
   // districts and counties as you go in, not make you find a control first.
-  const [autoLevel, setAutoLevel] = useState(true);
+  // Off by default. The opening level is county, and auto-level picks from
+  // the zoom — at the opening camera (~z3.4) that resolves to state and
+  // would overwrite the default before the first paint. The reader can turn
+  // it back on with the A chip.
+  const [autoLevel, setAutoLevel] = useState(false);
   const [year, setYear] = useState<number | null>(null);
   const [years, setYears] = useState<number[]>([]);
   const [yearCounts, setYearCounts] = useState<Map<number, number>>(new Map());
@@ -584,7 +620,11 @@ export default function USElectionPage({
    * A level that fell out of band because they kept ZOOMING is stale — move
    * the level to the camera.
    */
-  const pickedLevelRef = useRef<DivisionLevel | null>(null);
+  // Seeded with the opening level so the in-band guard treats it as a
+  // deliberate choice. County's band is z4-12 and the opening camera sits
+  // below it; without this the guard would read county as stale and swap it
+  // for whatever the zoom implies, undoing the default on first paint.
+  const pickedLevelRef = useRef<DivisionLevel | null>("county");
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready || autoLevel || !outOfBand) return;
@@ -1172,8 +1212,14 @@ export default function USElectionPage({
         const pool = generals.length ? generals : list;
         const best = pool.reduce<{ year: number; count: number } | null>(
           (a, b) => (!a || b.count > a.count ? b : a), null);
+        // The current cycle wins when we hold it, even though it is
+        // primary-only — a reader arriving days after an election means this
+        // one. The primary labelling is what makes that honest, and it keys
+        // off the cut being shown, so it fires on this first paint exactly
+        // as it does on a manual pick.
+        const current = ys.includes(OPENING_CYCLE) ? OPENING_CYCLE : null;
         setYear((cur) =>
-          cur && ys.includes(cur) ? cur : best?.year ?? ys[0] ?? null);
+          cur && ys.includes(cur) ? cur : current ?? best?.year ?? ys[0] ?? null);
       })
       .catch(() => {
         if (alive) { setYears([]); setYearTypes(new Map()); setYear(null); }
@@ -1277,7 +1323,11 @@ export default function USElectionPage({
       // $68.5m raised as a challenger against two sitting senators.
       setOffice("us_senate");
       setAutoLevel(false);
-      setLevel("state");
+      // County, matching the opening default rather than overriding it —
+      // z5.2 is inside county's z4-12 band, so Texas paints by county while
+      // the panel still opens on the statewide Senate contest.
+      pickedLevelRef.current = "county";
+      setLevel("county");
       setTimeout(() => {
         const texas: Row = {
           ocd_id: "ocd-division/country:us/state:tx",
@@ -2763,6 +2813,95 @@ export default function USElectionPage({
                                 )
                                 : <span className="text-slate-500">defending — not confirmed</span>}
                           </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── before and after ──────────────────────────
+                        The pre-election half is complete; the post-election
+                        half is one state. So the two reasons a seat shows no
+                        change are kept apart: not on the ballot, versus we
+                        hold no count. Collapsing them would render an unknown
+                        result as the incumbent holding on, which is the worst
+                        error available here.
+
+                        "Leading" is the strongest word used. North Carolina
+                        publishes no precinct denominator, so completeness is
+                        unknown and won / gain / flipped are not claims we are
+                        entitled to make. */}
+                    {hoverInfo.race.seat_change
+                      && hoverInfo.race.seat_change.status !== "not_up" && (
+                      <div className="mt-1.5 border-t border-amber-500/10 pt-1.5">
+                        <div className="flex items-baseline gap-1.5 font-mono text-[9px]">
+                          <span className="w-8 shrink-0 text-slate-500">PRE</span>
+                          <span className="truncate text-slate-300">
+                            {hoverInfo.race.seat_change.pre_name ?? "—"}
+                            {hoverInfo.race.seat_change.pre_party && (
+                              <span className={`ml-1 font-bold ${
+                                hoverInfo.race.seat_change.pre_party === "DEM" ? "text-blue-400"
+                                  : hoverInfo.race.seat_change.pre_party === "REP" ? "text-red-400"
+                                    : "text-slate-400"}`}>
+                                {hoverInfo.race.seat_change.pre_party.charAt(0)}
+                              </span>
+                            )}
+                            {hoverInfo.race.seat_change.open_seat && (
+                              <span className="ml-1 text-amber-400/80">· open</span>
+                            )}
+                          </span>
+                        </div>
+                        <div className="mt-0.5 flex items-baseline gap-1.5 font-mono text-[9px]">
+                          <span className="w-8 shrink-0 text-slate-500">POST</span>
+                          {hoverInfo.race.seat_change.leading_name ? (
+                            <span className="truncate text-slate-300">
+                              {hoverInfo.race.seat_change.leading_name}
+                              {hoverInfo.race.seat_change.leading_party && (
+                                <span className={`ml-1 font-bold ${
+                                  hoverInfo.race.seat_change.leading_party === "DEM" ? "text-blue-400"
+                                    : hoverInfo.race.seat_change.leading_party === "REP" ? "text-red-400"
+                                      : "text-slate-400"}`}>
+                                  {hoverInfo.race.seat_change.leading_party.charAt(0)}
+                                </span>
+                              )}
+                              <span className="ml-1 text-slate-500">
+                                {hoverInfo.race.seat_change.status === "called_by_source"
+                                  ? "· called by source"
+                                  : "· leading"}
+                              </span>
+                            </span>
+                          ) : (
+                            <span className="italic text-slate-500">
+                              result not yet available
+                            </span>
+                          )}
+                        </div>
+                        {/* Only where both sides exist, and worded as a
+                            comparison of parties in an unfinished count. */}
+                        {hoverInfo.race.seat_change.leading_differs !== null && (
+                          <div className={`mt-0.5 font-mono text-[9px] ${
+                            hoverInfo.race.seat_change.leading_differs
+                              ? "text-amber-300" : "text-slate-500"}`}>
+                            {hoverInfo.race.seat_change.leading_differs
+                              ? "different party leads than held the seat"
+                              : "same party leads as held the seat"}
+                          </div>
+                        )}
+                        {hoverInfo.race.result && (
+                          <div className="mt-0.5 font-mono text-[8px] leading-relaxed text-slate-600">
+                            {hoverInfo.race.result.total_votes.toLocaleString()} counted
+                            {hoverInfo.race.result.precincts_reporting_available
+                              && hoverInfo.race.result.precincts_total
+                              ? ` · ${hoverInfo.race.result.precincts_reporting}/${hoverInfo.race.result.precincts_total} precincts`
+                              : " · precincts reporting not published by this state"}
+                            {hoverInfo.race.result.reported_at && (
+                              <> · {hoverInfo.race.result.reported_at.slice(0, 16).replace("T", " ")}</>
+                            )}
+                            {hoverInfo.race.result.source && (
+                              <> · {hoverInfo.race.result.source}</>
+                            )}
+                          </div>
+                        )}
+                        <div className="mt-0.5 font-mono text-[8px] italic leading-relaxed text-slate-600">
+                          {hoverInfo.race.seat_change.note}
                         </div>
                       </div>
                     )}
