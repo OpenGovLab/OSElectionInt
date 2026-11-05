@@ -6,7 +6,6 @@ import {
   COUNT_CAVEAT,
   type CountyContest,
   fetchCountyResults,
-  NO_COUNT_NOTE,
   officeLabel,
   partyDot,
   precinctLabel,
@@ -1018,18 +1017,11 @@ function TheCount({ ocdId }: { ocdId: string }) {
   // who is about to get a result.
   if (rows === null) return null;
 
-  if (!rows.length) {
-    return (
-      <section className="mb-4 rounded-xl border border-white/10 bg-slate-500/5 px-3 py-2.5">
-        <h3 className="font-mono text-[9px] font-bold uppercase tracking-[0.18em] text-slate-400">
-          The count
-        </h3>
-        <p className="mt-1 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
-          {NO_COUNT_NOTE}
-        </p>
-      </section>
-    );
-  }
+  // Nothing at all where we hold no count. We have returns for one state, so
+  // this is the common case, and a paragraph explaining the absence on every
+  // other county in the country is noise that buries the panel's real
+  // content. An absent block is its own signal.
+  if (!rows.length) return null;
 
   return (
     <section className="mb-4 rounded-xl border border-emerald-600/25 bg-emerald-500/[0.06] px-3 py-2.5 dark:border-emerald-400/20">
@@ -1063,23 +1055,44 @@ function TheCount({ ocdId }: { ocdId: string }) {
 
           {/* Everyone on the ballot, in order. The reader clicked through for
               the full field, and a third-party total is part of the story of
-              a close race. */}
+              a close race.
+
+              The leader is set in larger, heavier type than the rest.
+              "Leads" stays the word — we hold no call, and this state
+              publishes no reporting denominator — but hierarchy rather than
+              vocabulary is what makes the answer readable at a glance. */}
           {ct.candidates.map((c, i) => (
             <div
               key={`${c.name}-${c.party ?? ""}`}
               className={`flex items-baseline justify-between gap-2 ${
-                i === 0 ? "" : "opacity-75"}`}
+                i === 0 ? "mt-0.5" : "opacity-70"}`}
             >
-              <span className="min-w-0 truncate text-[11px] text-slate-800 dark:text-slate-100">
-                <span className={`mr-1 inline-block h-1.5 w-1.5 rounded-full align-middle ${partyDot(c.party)}`} />
+              <span className={`min-w-0 truncate ${
+                i === 0
+                  ? "text-[15px] font-semibold leading-snug text-slate-900 dark:text-white"
+                  : "text-[11px] text-slate-700 dark:text-slate-300"}`}
+              >
+                <span className={`mr-1.5 inline-block rounded-full align-middle ${
+                  i === 0 ? "h-2.5 w-2.5" : "h-1.5 w-1.5"} ${partyDot(c.party)}`} />
                 {c.name}
-                {i === 0 && <span className="ml-1 text-slate-500">leads</span>}
-              </span>
-              <span className="shrink-0 font-mono text-[10px] tabular-nums text-slate-600 dark:text-slate-300">
-                {c.votes.toLocaleString()}
-                {c.percent != null && (
-                  <span className="ml-1 text-slate-500">{c.percent}%</span>
+                {i === 0 && (
+                  <span className="ml-1.5 font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-emerald-700 dark:text-emerald-400">
+                    leads
+                  </span>
                 )}
+              </span>
+              <span className={`shrink-0 tabular-nums ${
+                i === 0
+                  ? "font-mono text-[14px] font-semibold text-slate-900 dark:text-white"
+                  : "font-mono text-[10px] text-slate-600 dark:text-slate-400"}`}
+              >
+                {c.percent != null && `${c.percent}%`}
+                <span className={i === 0
+                  ? "ml-1.5 text-[10px] font-normal text-slate-500"
+                  : "ml-1 text-slate-500"}
+                >
+                  {c.votes.toLocaleString()}
+                </span>
               </span>
             </div>
           ))}
@@ -1094,10 +1107,18 @@ function TheCount({ ocdId }: { ocdId: string }) {
         </div>
       ))}
 
-      <p className="mt-2 border-t border-emerald-700/15 pt-1.5 text-[9px] leading-relaxed text-emerald-900/60 dark:border-emerald-400/10 dark:text-emerald-200/50">
-        {COUNT_CAVEAT}
-        {rows[0].source ? ` Source: ${rows[0].source}.` : ""}
-      </p>
+      {/* One disclosure for the whole panel, closed. It was printing beside
+          every contest, which on a four-contest county meant four copies of
+          the same paragraph ahead of the numbers a reader came for. */}
+      <details className="group mt-2 border-t border-emerald-700/15 pt-1.5 dark:border-emerald-400/10">
+        <summary className="cursor-pointer list-none font-mono text-[9px] uppercase tracking-[0.14em] text-emerald-800/70 marker:content-none hover:text-emerald-700 dark:text-emerald-300/50 dark:hover:text-emerald-300">
+          Unofficial · about these figures
+        </summary>
+        <p className="mt-1 text-[9px] leading-relaxed text-emerald-900/60 dark:text-emerald-200/50">
+          {COUNT_CAVEAT}
+          {rows[0].source ? ` Source: ${rows[0].source}.` : ""}
+        </p>
+      </details>
     </section>
   );
 }

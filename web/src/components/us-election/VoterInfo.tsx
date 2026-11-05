@@ -312,132 +312,278 @@ export default function VoterInfo({ ocdId }: { ocdId: string }) {
         </div>
       )}
 
-      {/* ── the two things that expire ── */}
-      {(reg?.deadlines || mail?.application_deadline || mail?.ballot_due) && (
-        <div className="mt-2.5 space-y-1.5">
-          {reg?.deadlines && (
-            <Rule
-              tone="lead"
-              icon={ICON.calendar}
-              label="Register by"
-              passed={passed}
-              text={reg.deadlines}
-              sourceUrl={reg.source_url}
-            />
-          )}
-          {/* Missing the deadline is not always fatal, so this is surfaced
-              rather than left buried in the prose above.
+      {/* Everything from here down is reference once the election has
+          passed, so it collapses and starts closed. On a phone this panel
+          IS the interface, and four expanded deadline cards pushed the
+          count off screen. Before an election these are the point and stay
+          open — the branch is on the clock, not on a breakpoint, so it
+          flips by itself rather than shipping stale. */}
+      {passed ? (
+        <details className="group mt-2">
+          <summary className="cursor-pointer list-none font-mono text-[9px] uppercase tracking-[0.14em] text-emerald-800/70 marker:content-none hover:text-emerald-700 dark:text-emerald-300/50 dark:hover:text-emerald-300">
+            Deadlines and ID rules that applied
+            <span className="ml-1 group-open:hidden">▸</span>
+            <span className="ml-1 hidden group-open:inline">▾</span>
+          </summary>
+          <>
+        {/* ── the two things that expire ── */}
+        {(reg?.deadlines || mail?.application_deadline || mail?.ballot_due) && (
+          <div className="mt-2.5 space-y-1.5">
+            {reg?.deadlines && (
+              <Rule
+                tone="lead"
+                icon={ICON.calendar}
+                label="Register by"
+                passed={passed}
+                text={reg.deadlines}
+                sourceUrl={reg.source_url}
+              />
+            )}
+            {/* Missing the deadline is not always fatal, so this is surfaced
+                rather than left buried in the prose above.
 
-              The label is a QUESTION and the answer is the source's own
-              words, because the obvious generated sentence — "<State> offers
-              same-day registration" — is false in North Dakota, which has
-              `same_day: true` only because it requires no registration at
-              all. Asserting it there would have contradicted the verbatim
-              text printed directly beneath it. All 25 same-day states carry
-              this string, so nothing is lost by refusing to generate one. */}
-          {reg?.same_day === true && reg.election_day_registration && (
-            <Rule
-              icon={ICON.calendar}
-              label="If you miss the deadline"
-              passed={passed}
-              text={reg.election_day_registration}
-              sourceUrl={reg.source_url}
-            />
-          )}
-          {mail?.application_deadline && (
-            <Rule
-              tone="lead"
-              icon={ICON.mail}
-              label="Request a mail ballot by"
-              passed={passed}
-              text={mail.application_deadline}
-              sourceUrl={mail.source_url}
-            />
-          )}
-          {mail?.ballot_due && (
-            <Rule
-              tone="lead"
-              icon={ICON.mail}
-              label="Return your mail ballot by"
-              passed={passed}
-              text={mail.ballot_due}
-              sourceUrl={mail.source_url}
-            />
-          )}
-        </div>
-      )}
-
-      {/* ── early voting ── */}
-      {early && (early.offered === false || early.begins || early.ends) && (
-        <div className="mt-2 border-t border-emerald-700/15 pt-1.5 dark:border-emerald-400/10">
-          <div className="flex items-center gap-1.5 text-emerald-800 dark:text-emerald-300">
-            {ICON.clock}
-            <span className="font-mono text-[9px] font-bold uppercase tracking-[0.16em]">
-              Early voting
-            </span>
-            {early.source_url && (
-              <a
-                href={early.source_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="ml-auto font-mono text-[8px] uppercase tracking-wider text-emerald-700/60 underline-offset-2 hover:underline dark:text-emerald-400/60"
-              >
-                source ↗
-              </a>
+                The label is a QUESTION and the answer is the source's own
+                words, because the obvious generated sentence — "<State> offers
+                same-day registration" — is false in North Dakota, which has
+                `same_day: true` only because it requires no registration at
+                all. Asserting it there would have contradicted the verbatim
+                text printed directly beneath it. All 25 same-day states carry
+                this string, so nothing is lost by refusing to generate one. */}
+            {reg?.same_day === true && reg.election_day_registration && (
+              <Rule
+                icon={ICON.calendar}
+                label="If you miss the deadline"
+                passed={passed}
+                text={reg.election_day_registration}
+                sourceUrl={reg.source_url}
+              />
+            )}
+            {mail?.application_deadline && (
+              <Rule
+                tone="lead"
+                icon={ICON.mail}
+                label="Request a mail ballot by"
+                passed={passed}
+                text={mail.application_deadline}
+                sourceUrl={mail.source_url}
+              />
+            )}
+            {mail?.ballot_due && (
+              <Rule
+                tone="lead"
+                icon={ICON.mail}
+                label="Return your mail ballot by"
+                passed={passed}
+                text={mail.ballot_due}
+                sourceUrl={mail.source_url}
+              />
             )}
           </div>
-          {early.offered === false ? (
-            <p className="mt-1 text-[11px] leading-relaxed text-slate-700 dark:text-slate-200">
-              {early.begins || `${office.name} does not offer early voting.`}
-            </p>
-          ) : (
-            <div className="mt-1 space-y-0.5 text-[11px] leading-relaxed text-slate-700 dark:text-slate-200">
-              {early.begins && (
-                <p><span className="text-slate-500 dark:text-slate-400">Begins: </span>{early.begins}</p>
-              )}
-              {early.ends && (
-                <p><span className="text-slate-500 dark:text-slate-400">Ends: </span>{early.ends}</p>
+        )}
+
+        {/* ── early voting ── */}
+        {early && (early.offered === false || early.begins || early.ends) && (
+          <div className="mt-2 border-t border-emerald-700/15 pt-1.5 dark:border-emerald-400/10">
+            <div className="flex items-center gap-1.5 text-emerald-800 dark:text-emerald-300">
+              {ICON.clock}
+              <span className="font-mono text-[9px] font-bold uppercase tracking-[0.16em]">
+                Early voting
+              </span>
+              {early.source_url && (
+                <a
+                  href={early.source_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ml-auto font-mono text-[8px] uppercase tracking-wider text-emerald-700/60 underline-offset-2 hover:underline dark:text-emerald-400/60"
+                >
+                  source ↗
+                </a>
               )}
             </div>
+            {early.offered === false ? (
+              <p className="mt-1 text-[11px] leading-relaxed text-slate-700 dark:text-slate-200">
+                {early.begins || `${office.name} does not offer early voting.`}
+              </p>
+            ) : (
+              <div className="mt-1 space-y-0.5 text-[11px] leading-relaxed text-slate-700 dark:text-slate-200">
+                {early.begins && (
+                  <p><span className="text-slate-500 dark:text-slate-400">Begins: </span>{early.begins}</p>
+                )}
+                {early.ends && (
+                  <p><span className="text-slate-500 dark:text-slate-400">Ends: </span>{early.ends}</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── the long prose, behind expanders ── */}
+        <div className="mt-1.5">
+          {id?.in_person && (
+            <Expandable
+              icon={ICON.id}
+              label="ID to vote in person"
+              text={id.in_person}
+              sourceUrl={id.source_url}
+            />
+          )}
+          {id?.absentee && (
+            <Expandable
+              icon={ICON.id}
+              label="ID to vote by mail"
+              text={id.absentee}
+              sourceUrl={id.source_url}
+            />
+          )}
+          {mail?.rules && (
+            <Expandable
+              icon={ICON.mail}
+              label="Who can vote by mail"
+              text={mail.rules}
+              sourceUrl={mail.rules_source_url || mail.source_url}
+            />
           )}
         </div>
+
+        {/* ── provenance, quiet but legible ── */}
+        <p className="mt-2 border-t border-emerald-700/15 pt-1.5 text-[9px] leading-relaxed text-emerald-900/60 dark:border-emerald-400/10 dark:text-emerald-200/50">
+          {office.caveat
+            || "Summary compiled from the cited sources. The state's own election "
+              + "office is the authority and governs."}
+          {checked ? ` Checked ${checked}.` : ""}
+        </p>
+          </>
+        </details>
+      ) : (
+        <>
+        {/* ── the two things that expire ── */}
+        {(reg?.deadlines || mail?.application_deadline || mail?.ballot_due) && (
+          <div className="mt-2.5 space-y-1.5">
+            {reg?.deadlines && (
+              <Rule
+                tone="lead"
+                icon={ICON.calendar}
+                label="Register by"
+                passed={passed}
+                text={reg.deadlines}
+                sourceUrl={reg.source_url}
+              />
+            )}
+            {/* Missing the deadline is not always fatal, so this is surfaced
+                rather than left buried in the prose above.
+
+                The label is a QUESTION and the answer is the source's own
+                words, because the obvious generated sentence — "<State> offers
+                same-day registration" — is false in North Dakota, which has
+                `same_day: true` only because it requires no registration at
+                all. Asserting it there would have contradicted the verbatim
+                text printed directly beneath it. All 25 same-day states carry
+                this string, so nothing is lost by refusing to generate one. */}
+            {reg?.same_day === true && reg.election_day_registration && (
+              <Rule
+                icon={ICON.calendar}
+                label="If you miss the deadline"
+                passed={passed}
+                text={reg.election_day_registration}
+                sourceUrl={reg.source_url}
+              />
+            )}
+            {mail?.application_deadline && (
+              <Rule
+                tone="lead"
+                icon={ICON.mail}
+                label="Request a mail ballot by"
+                passed={passed}
+                text={mail.application_deadline}
+                sourceUrl={mail.source_url}
+              />
+            )}
+            {mail?.ballot_due && (
+              <Rule
+                tone="lead"
+                icon={ICON.mail}
+                label="Return your mail ballot by"
+                passed={passed}
+                text={mail.ballot_due}
+                sourceUrl={mail.source_url}
+              />
+            )}
+          </div>
+        )}
+
+        {/* ── early voting ── */}
+        {early && (early.offered === false || early.begins || early.ends) && (
+          <div className="mt-2 border-t border-emerald-700/15 pt-1.5 dark:border-emerald-400/10">
+            <div className="flex items-center gap-1.5 text-emerald-800 dark:text-emerald-300">
+              {ICON.clock}
+              <span className="font-mono text-[9px] font-bold uppercase tracking-[0.16em]">
+                Early voting
+              </span>
+              {early.source_url && (
+                <a
+                  href={early.source_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ml-auto font-mono text-[8px] uppercase tracking-wider text-emerald-700/60 underline-offset-2 hover:underline dark:text-emerald-400/60"
+                >
+                  source ↗
+                </a>
+              )}
+            </div>
+            {early.offered === false ? (
+              <p className="mt-1 text-[11px] leading-relaxed text-slate-700 dark:text-slate-200">
+                {early.begins || `${office.name} does not offer early voting.`}
+              </p>
+            ) : (
+              <div className="mt-1 space-y-0.5 text-[11px] leading-relaxed text-slate-700 dark:text-slate-200">
+                {early.begins && (
+                  <p><span className="text-slate-500 dark:text-slate-400">Begins: </span>{early.begins}</p>
+                )}
+                {early.ends && (
+                  <p><span className="text-slate-500 dark:text-slate-400">Ends: </span>{early.ends}</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── the long prose, behind expanders ── */}
+        <div className="mt-1.5">
+          {id?.in_person && (
+            <Expandable
+              icon={ICON.id}
+              label="ID to vote in person"
+              text={id.in_person}
+              sourceUrl={id.source_url}
+            />
+          )}
+          {id?.absentee && (
+            <Expandable
+              icon={ICON.id}
+              label="ID to vote by mail"
+              text={id.absentee}
+              sourceUrl={id.source_url}
+            />
+          )}
+          {mail?.rules && (
+            <Expandable
+              icon={ICON.mail}
+              label="Who can vote by mail"
+              text={mail.rules}
+              sourceUrl={mail.rules_source_url || mail.source_url}
+            />
+          )}
+        </div>
+
+        {/* ── provenance, quiet but legible ── */}
+        <p className="mt-2 border-t border-emerald-700/15 pt-1.5 text-[9px] leading-relaxed text-emerald-900/60 dark:border-emerald-400/10 dark:text-emerald-200/50">
+          {office.caveat
+            || "Summary compiled from the cited sources. The state's own election "
+              + "office is the authority and governs."}
+          {checked ? ` Checked ${checked}.` : ""}
+        </p>
+        </>
       )}
-
-      {/* ── the long prose, behind expanders ── */}
-      <div className="mt-1.5">
-        {id?.in_person && (
-          <Expandable
-            icon={ICON.id}
-            label="ID to vote in person"
-            text={id.in_person}
-            sourceUrl={id.source_url}
-          />
-        )}
-        {id?.absentee && (
-          <Expandable
-            icon={ICON.id}
-            label="ID to vote by mail"
-            text={id.absentee}
-            sourceUrl={id.source_url}
-          />
-        )}
-        {mail?.rules && (
-          <Expandable
-            icon={ICON.mail}
-            label="Who can vote by mail"
-            text={mail.rules}
-            sourceUrl={mail.rules_source_url || mail.source_url}
-          />
-        )}
-      </div>
-
-      {/* ── provenance, quiet but legible ── */}
-      <p className="mt-2 border-t border-emerald-700/15 pt-1.5 text-[9px] leading-relaxed text-emerald-900/60 dark:border-emerald-400/10 dark:text-emerald-200/50">
-        {office.caveat
-          || "Summary compiled from the cited sources. The state's own election "
-            + "office is the authority and governs."}
-        {checked ? ` Checked ${checked}.` : ""}
-      </p>
     </section>
   );
 }

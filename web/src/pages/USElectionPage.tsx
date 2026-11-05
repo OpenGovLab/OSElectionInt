@@ -2673,6 +2673,41 @@ export default function USElectionPage({
         </button>
       </div>
 
+      {/* Level, visible and switchable on a phone.
+          The desktop sidebar carries this, but on mobile it sat behind a
+          collapsed "+" toggle, so a reader could neither see which level
+          they were on nor change it — the single most disorienting thing
+          about the small-screen view. Bottom-centre keeps it in thumb reach
+          and off the part of the map being read. Desktop keeps the sidebar
+          and hides this. */}
+      {/* bottom-24 clears both the collapsed sheet (56px at bottom-0) and the
+          margin legend (bottom-9, ~52px tall), which on a 390px screen is
+          wide enough to sit under a centred control. Hidden while a panel is
+          expanded: it would float over the thing being read, and a reader
+          mid-panel is not switching level. */}
+      <div className={`pointer-events-auto absolute bottom-24 left-1/2 z-20 ${
+        sheetOpen || chatOpen || issuesOpen || spendOpen ? "hidden" : "flex"
+      } -translate-x-1/2 items-center gap-px overflow-hidden rounded-full border border-white/15 bg-slate-900/90 p-0.5 backdrop-blur md:!hidden`}>
+        {allowedLevels.map((l) => (
+          <button
+            key={l.id}
+            onClick={() => {
+              pickedLevelRef.current = l.id;
+              setAutoLevel(false);
+              setLevel(l.id);
+            }}
+            aria-pressed={!autoLevel && level === l.id}
+            className={`rounded-full px-3.5 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.14em] transition-colors ${
+              !autoLevel && level === l.id
+                ? "bg-cyan-400 text-slate-950"
+                : "text-slate-400"
+            }`}
+          >
+            {l.label}
+          </button>
+        ))}
+      </div>
+
       {/* Vertical toolbar — grouped icon buttons */}
       <div className={`pointer-events-auto absolute left-4 top-[5.5rem] z-20 ${toolsOpen ? "flex" : "hidden"} flex-col md:flex`}>
         <div className="flex flex-col rounded-lg border border-white/10 bg-slate-900/80 backdrop-blur">
