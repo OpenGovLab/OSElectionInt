@@ -585,6 +585,56 @@ exports.getResultsLive = async (req, res) => {
   }
 };
 
+/**
+ * GET /api/us-election/results-county?ocd_id=
+ * GET /api/us-election/results-county?state=&office=
+ *
+ * With ocd_id, every contest that division took part in — a county votes
+ * in its own House district and in the statewide Senate race, so one
+ * county legitimately returns several rows. It answers for a state
+ * division too, from the statewide tier.
+ *
+ * Without it, the bulk set for a state and office, which is what a county
+ * choropleth paints from.
+ *
+ * Coverage is ragged and will stay that way: we hold North Carolina and
+ * nothing else. An empty answer means we hold no count for that division,
+ * never that no votes were cast there.
+ */
+exports.getResultsCounty = async (req, res) => {
+  try {
+    const ocdId = req.query.ocd_id ? String(req.query.ocd_id) : null;
+    const state = req.query.state ? String(req.query.state) : null;
+    const office = req.query.office ? String(req.query.office) : null;
+    // No arguments returns everything we hold. That is defensible only
+    // because coverage is tiny — one state, a few hundred rows — and it
+    // lets a client index the whole set once instead of guessing which
+    // states have data. The limit still caps it if that stops being true.
+    if (office && !OFFICES.includes(office)) {
+      return res.status(400).json({
+        success: false, message: `office must be one of ${OFFICES}`,
+      });
+    }
+    const limit = clampInt(req.query.limit, 400, 1, 4000);
+    const rows = ocdId
+      ? await repo.resultsForDivision({ ocdId, cycle: LIVE_CYCLE })
+      : await repo.resultsCounty({ state, office, cycle: LIVE_CYCLE, limit });
+    res.json({
+      success: true,
+      data: {
+        count: rows.length,
+        rows,
+        ocd_id: ocdId,
+        cycle: LIVE_CYCLE,
+        clock: "source reported_at",
+        caveat: LIVE_CAVEAT,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 exports.getPolling2026 = async (req, res) => {
   try {
     const limit = clampInt(req.query.limit, 500, 1, 2000);

@@ -348,6 +348,10 @@ def adapter_nc(entry):
         return f[k] if k is not None and k < len(f) else ""
 
     contests = {}
+    # Same rows, aggregated one tier down. The county is in every row and
+    # was previously used only to make a precinct unique, then discarded —
+    # so a county tier costs one more dict and no extra fetch.
+    counties = {}
     for line in text[1:]:
         f = line.split("\t")
         if len(f) < len(hdr):
@@ -363,28 +367,56 @@ def adapter_nc(entry):
             "precincts_with_votes": set(),
         })
 
-        precinct = (cell(f, "County"), cell(f, "Precinct"))
-        if (cell(f, "Real Precinct") or "").strip().upper() == "Y":
+        county_name = (cell(f, "County") or "").strip()
+        ckey = (county_name, ocd_id, office, district)
+        cc = counties.setdefault(ckey, {
+            "county_name": county_name,
+            "candidates": {},
+            "precincts": set(),
+            "precincts_with_votes": set(),
+        }) if county_name else None
+
+        precinct = (county_name, cell(f, "Precinct"))
+        real = (cell(f, "Real Precinct") or "").strip().upper() == "Y"
+        if real:
             c["precincts"].add(precinct)
+            if cc is not None:
+                cc["precincts"].add(precinct)
 
         total = i(cell(f, "Total Votes")) or 0
         if total:
             c["precincts_with_votes"].add(precinct)
+            if cc is not None:
+                cc["precincts_with_votes"].add(precinct)
 
         name = (cell(f, "Choice") or "").strip()
         if not name:
             continue
+        modes = {
+            "election_day": i(cell(f, "Election Day")) or 0,
+            "early": i(cell(f, "Early Voting")) or 0,
+            "mail": i(cell(f, "Absentee by Mail")) or 0,
+            "provisional": i(cell(f, "Provisional")) or 0,
+        }
+        party = (cell(f, "Choice Party") or "").strip() or None
+
         cand = c["candidates"].setdefault(name, {
-            "name": name,
-            "party": (cell(f, "Choice Party") or "").strip() or None,
-            "votes": 0,
+            "name": name, "party": party, "votes": 0,
             "by_mode": {"election_day": 0, "early": 0, "mail": 0, "provisional": 0},
         })
         cand["votes"] += total
-        cand["by_mode"]["election_day"] += i(cell(f, "Election Day")) or 0
-        cand["by_mode"]["early"] += i(cell(f, "Early Voting")) or 0
-        cand["by_mode"]["mail"] += i(cell(f, "Absentee by Mail")) or 0
-        cand["by_mode"]["provisional"] += i(cell(f, "Provisional")) or 0
+        for k, v in modes.items():
+            cand["by_mode"][k] += v
+
+        if cc is not None:
+            ccand = cc["candidates"].setdefault(name, {
+                "name": name, "party": party, "votes": 0,
+                "by_mode": {"election_day": 0, "early": 0, "mail": 0,
+                            "provisional": 0},
+            })
+            ccand["votes"] += total
+            for k, v in modes.items():
+                ccand["by_mode"][k] += v
 
     out = {}
     for (ocd_id, office, district), c in contests.items():
@@ -403,10 +435,47 @@ def adapter_nc(entry):
             "precincts_total": len(c["precincts"]) or None,
             "precincts_with_votes": len(c["precincts_with_votes"]),
         }
-    return out, as_of
+
+    cout = {}
+    for (county_name, ocd_id, office, district), cc in counties.items():
+        cands = sorted(cc["candidates"].values(), key=lambda x: -x["votes"])
+        tv = sum(x["votes"] for x in cands)
+        for x in cands:
+            x["percent"] = round(100.0 * x["votes"] / tv, 2) if tv else None
+        cout[(county_name, ocd_id, office, district)] = {
+            "county_name": county_name,
+            "candidates": cands,
+            "total_votes": tv,
+            "precincts_reporting": None,
+            "precincts_reporting_available": False,
+            "precincts_total": len(cc["precincts"]) or None,
+            "precincts_with_votes": len(cc["precincts_with_votes"]),
+        }
+    return out, as_of, cout
 
 
 ADAPTERS = {"NC": adapter_nc}
+
+
+def county_ocd_index(db, state):
+    """Canonical county OCD ids for one state, keyed on a normalised name.
+
+    The join is on a stripped-to-letters form because the two sides spell
+    counties differently — NC writes "NEW HANOVER" and the division carries
+    match_key "new hanover". This project has lost rows to name joins more
+    than once (the FEC files one person under eight spellings), so the
+    caller is told what failed rather than finding a county quietly missing.
+    """
+    rows = db["us_divisions"].find(
+        {"level": "county", "state": state.upper()},
+        {"_id": 1, "match_key": 1, "name": 1},
+    )
+    out = {}
+    for r in rows:
+        key = re.sub(r"[^a-z]", "", str(r.get("match_key") or r.get("name") or "").lower())
+        if key:
+            out[key] = r["_id"]
+    return out
 
 
 def stage_results(db, apply_writes, only_state=None):
@@ -425,8 +494,13 @@ def stage_results(db, apply_writes, only_state=None):
     # exist. Keyed on contest + reported_at, so re-running against an
     # unchanged source is a no-op rather than a duplicate frame.
     snaps = db["us_results_snapshots"]
+    # County tier. Kept apart from us_margins (certified history) and from
+    # the Ballotpedia scrape: three sources that should be comparable, and
+    # merging them would destroy the ability to check one against another.
+    county = db["us_results_county"]
     run_at = now()
     wrote = stale = 0
+    county_wrote = county_stale = 0
     change_docs = []
 
     for abbv, entry in sorted(cfg["adapters"].items()):
@@ -438,7 +512,11 @@ def stage_results(db, apply_writes, only_state=None):
             continue
 
         try:
-            contests, as_of = ADAPTERS[abbv](entry)
+            got = ADAPTERS[abbv](entry)
+            # Adapters may return a county tier as a third element. Older
+            # two-element adapters stay valid rather than being rewritten.
+            contests, as_of = got[0], got[1]
+            county_contests = got[2] if len(got) > 2 else {}
         except Exception as e:
             print(f"  {abbv}: FETCH FAILED {type(e).__name__}: {e}")
             continue
@@ -523,11 +601,97 @@ def stage_results(db, apply_writes, only_state=None):
                 live.replace_one({"_id": _id}, doc, upsert=True)
             wrote += 1
 
+        # ── county tier ──────────────────────────────────────────────
+        if county_contests:
+            idx = county_ocd_index(db, abbv)
+            matched = set()
+            missed = set()
+            # Reconciliation is the point of this block: county sums that
+            # do not equal the statewide total mean rows were dropped or
+            # double-counted, and either is invisible once it is on a map.
+            recon = {}
+            for (cname, p_ocd, office, district), cc in county_contests.items():
+                key = re.sub(r"[^a-z]", "", cname.lower())
+                c_ocd = idx.get(key)
+                if not c_ocd:
+                    missed.add(cname)
+                    continue
+                matched.add(cname)
+                rk = (p_ocd, office, district)
+                recon[rk] = recon.get(rk, 0) + cc["total_votes"]
+
+                cands = cc["candidates"]
+                lead = cands[0] if cands else None
+                runner = cands[1] if len(cands) > 1 else None
+                _cid = (f"{CYCLE}|{c_ocd}|{office}|"
+                        f"{district if district is not None else '-'}")
+                cdoc = {
+                    "_id": _cid,
+                    "cycle": CYCLE,
+                    "ocd_id": c_ocd,
+                    "county_name": cc["county_name"],
+                    "state": abbv,
+                    "office": office,
+                    "district": district,
+                    # The statewide/district contest this county is part of,
+                    # so a reader can get from one county to the whole race.
+                    "contest_ocd_id": p_ocd,
+                    "contest_id": (f"{CYCLE}|{p_ocd}|{office}|"
+                                   f"{district if district is not None else '-'}"),
+                    "candidates": cands,
+                    "total_votes": cc["total_votes"],
+                    # Leader, not winner. Nothing here is called.
+                    "leader": ({"name": lead["name"], "party": lead["party"],
+                                "votes": lead["votes"],
+                                "percent": lead["percent"]} if lead else None),
+                    "margin_votes": ((lead["votes"] - runner["votes"])
+                                     if lead and runner else None),
+                    "margin_pct": (round((lead["percent"] or 0)
+                                         - (runner["percent"] or 0), 2)
+                                   if lead and runner
+                                   and lead["percent"] is not None
+                                   and runner["percent"] is not None else None),
+                    "precincts_reporting": cc["precincts_reporting"],
+                    "precincts_reporting_available":
+                        cc["precincts_reporting_available"],
+                    "precincts_total": cc["precincts_total"],
+                    "precincts_with_votes": cc["precincts_with_votes"],
+                    "source_call": None,
+                    "reported_at": as_of,
+                    "source": entry["state"],
+                    "source_url": entry["url"],
+                    "fetched_at": run_at,
+                    "caveat": RESULTS_CAVEAT,
+                }
+                if apply_writes:
+                    prevc = county.find_one({"_id": _cid}, {"reported_at": 1})
+                    if prevc and not newer(as_of, prevc.get("reported_at")):
+                        county_stale += 1
+                        continue
+                    county.replace_one({"_id": _cid}, cdoc, upsert=True)
+                county_wrote += 1
+
+            print(f"       counties: {len(matched)} matched"
+                  + (f", {len(missed)} UNMATCHED: {', '.join(sorted(missed))}"
+                     if missed else ", 0 unmatched"))
+            for rk, csum in sorted(recon.items()):
+                statewide = contests.get(rk, {}).get("total_votes")
+                if statewide is None:
+                    continue
+                delta = csum - statewide
+                flag = "OK" if delta == 0 else f"DELTA {delta:+,}"
+                print(f"       reconcile {rk[1]}"
+                      + (f"-{rk[2]}" if rk[2] is not None else "")
+                      + f": counties {csum:,} vs statewide {statewide:,}  {flag}")
+
     if apply_writes and change_docs:
         changes.insert_many(change_docs)
     print(f"  {'wrote' if apply_writes else 'would write'} {wrote} contests"
           + (f", skipped {stale} as stale" if stale else "")
           + f", {len(change_docs)} changes logged")
+    print(f"  {'wrote' if apply_writes else 'would write'} {county_wrote} "
+          f"county rows" + (f", skipped {county_stale} as stale"
+                            if county_stale else ""))
     return wrote
 
 

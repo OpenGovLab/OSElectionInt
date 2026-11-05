@@ -1390,6 +1390,147 @@ async function resultsLatest({ office, level, cycle }) {
   }));
 }
 
+/**
+ * The count, one tier down: who leads each contest in a given county.
+ *
+ * Two shapes, because a reader asks two different questions. Given a
+ * division they want every contest it took part in — a county votes in its
+ * own House district AND in the statewide Senate race, so one county has
+ * several rows and returning only one would silently hide a contest. Given
+ * a state and office they want the whole set, which is what paints a
+ * choropleth.
+ *
+ * "leader" is the word throughout, never winner. North Carolina publishes
+ * no precincts-reporting denominator, so completeness is unknown; the
+ * observable precincts_with_votes is passed through as itself and is never
+ * turned into a percent complete.
+ *
+ * Separate collection from us_margins (certified history) and from the
+ * Ballotpedia scrape on purpose. Three sources that disagree are useful;
+ * three sources merged are one source you cannot check.
+ */
+function shapeCountyRow(r) {
+  return {
+    ocd_id: r.ocd_id,
+    county_name: r.county_name ?? null,
+    state: r.state,
+    office: r.office,
+    district: r.district ?? null,
+    contest_ocd_id: r.contest_ocd_id ?? null,
+    candidates: (r.candidates ?? []).map((c) => ({
+      name: c.name, party: c.party ?? null, votes: c.votes ?? 0,
+      percent: c.percent ?? null, by_mode: c.by_mode ?? null,
+    })),
+    total_votes: r.total_votes ?? 0,
+    leader: r.leader ?? null,
+    margin_votes: r.margin_votes ?? null,
+    margin_pct: r.margin_pct ?? null,
+    precincts_reporting: r.precincts_reporting ?? null,
+    precincts_reporting_available: r.precincts_reporting_available === true,
+    precincts_total: r.precincts_total ?? null,
+    precincts_with_votes: r.precincts_with_votes ?? null,
+    source_call: r.source_call ?? null,
+    source: r.source ?? null,
+    source_url: r.source_url ?? null,
+    reported_at: r.reported_at ?? null,
+  };
+}
+
+/** Every contest we hold for one division — county OR state. */
+async function resultsForDivision({ ocdId, cycle }) {
+  // A state division has its contests in us_results_live (statewide and
+  // per-district); a county has its slice in us_results_county. Checking
+  // both means one call answers for either tier.
+  // A state's own id matches only its statewide contests — House races sit
+  // under .../state:nc/cd:7. Hovering a state and being told about the
+  // Senate race while fourteen House races go unmentioned is a worse answer
+  // than listing them, so contests nested under the division come too,
+  // tagged so the caller can lead with the statewide one.
+  const isState = /\/state:[a-z]{2}$/.test(ocdId);
+  const liveQ = isState
+    ? { cycle, $or: [{ ocd_id: ocdId }, { ocd_id: { $regex: `^${ocdId}/` } }] }
+    : { ocd_id: ocdId, cycle };
+  const [countyRows, liveRows] = await Promise.all([
+    M(TABLES.resultsCounty).find({ ocd_id: ocdId, cycle }).lean(),
+    M(TABLES.resultsLive).find(liveQ).lean(),
+  ]);
+  const rows = [
+    ...countyRows.map(shapeCountyRow),
+    ...liveRows.map((r) => {
+      const cands = (r.candidates ?? []);
+      const lead = cands[0];
+      const runner = cands[1];
+      return {
+        ...shapeCountyRow(r),
+        tier: "contest",
+        leader: lead
+          ? { name: lead.name, party: lead.party ?? null,
+              votes: lead.votes ?? 0, percent: lead.percent ?? null }
+          : null,
+        margin_votes: lead && runner
+          ? (lead.votes ?? 0) - (runner.votes ?? 0) : null,
+        margin_pct: lead && runner
+          && lead.percent != null && runner.percent != null
+          ? Math.round((lead.percent - runner.percent) * 100) / 100 : null,
+      };
+    }),
+  ];
+  for (const r of rows) {
+    if (!r.tier) r.tier = "county";
+    // Statewide means the whole division voted in it; a House race inside a
+    // state did not. The distinction drives what a hover leads with.
+    r.statewide = r.tier === "contest" && r.ocd_id === ocdId;
+  }
+  // Statewide first, then by office, so a county panel reads Senate then
+  // its House district rather than in storage order.
+  rows.sort((a, b) => Number(b.statewide) - Number(a.statewide)
+    || (a.district ?? -1) - (b.district ?? -1)
+    || String(a.office).localeCompare(String(b.office)));
+  return rows;
+}
+
+/**
+ * Bulk rows for painting a map and for indexing client-side.
+ *
+ * Unions both tiers. A client that fetches this once can answer a hover at
+ * county OR state level from the same map, which is why the statewide
+ * contests come along rather than forcing a second request against a
+ * different endpoint with a different shape.
+ */
+async function resultsCounty({ state, office, cycle, limit }) {
+  const q = { cycle };
+  if (state) q.state = String(state).toUpperCase();
+  if (office) q.office = office;
+  const [countyRows, liveRows] = await Promise.all([
+    M(TABLES.resultsCounty).find(q).limit(limit).lean(),
+    M(TABLES.resultsLive).find(q).limit(limit).lean(),
+  ]);
+  const out = countyRows.map((r) => ({ ...shapeCountyRow(r), tier: "county",
+    statewide: false }));
+  for (const r of liveRows) {
+    const cands = r.candidates ?? [];
+    const lead = cands[0];
+    const runner = cands[1];
+    out.push({
+      ...shapeCountyRow(r),
+      tier: "contest",
+      // A contest's own division voted in it as a whole: statewide for a
+      // Senate race, district-wide for a House seat. Either way the
+      // division is not a slice of a bigger count, which is the
+      // distinction a hover needs.
+      statewide: true,
+      leader: lead
+        ? { name: lead.name, party: lead.party ?? null,
+            votes: lead.votes ?? 0, percent: lead.percent ?? null }
+        : null,
+      margin_votes: lead && runner ? (lead.votes ?? 0) - (runner.votes ?? 0) : null,
+      margin_pct: lead && runner && lead.percent != null && runner.percent != null
+        ? Math.round((lead.percent - runner.percent) * 100) / 100 : null,
+    });
+  }
+  return out;
+}
+
 async function voterInfo(state) {
   return M(TABLES.voterInfo).collection.findOne({ _id: state });
 }
@@ -1827,6 +1968,8 @@ module.exports = {
   resultsTimeline,
   resultsAsOf,
   resultsLatest,
+  resultsForDivision,
+  resultsCounty,
   issueCategories,
   positionsForDivision,
   positionsByIssue,

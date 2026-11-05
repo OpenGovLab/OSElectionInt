@@ -182,6 +182,7 @@ const TABLES = {
   ieLineItems: "us_independent_expenditures",
   ieMeta: "us_ie_meta",
   resultsLive: "us_results_live",
+  resultsCounty: "us_results_county",
   resultsChanges: "us_results_changes",
   earlyVote: "us_early_vote_2026",
 };

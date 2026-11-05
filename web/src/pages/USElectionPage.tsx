@@ -156,6 +156,42 @@ interface EarlyVote {
   state_source: string | null;
 }
 
+/**
+ * One contest's count in one division, from /results-county.
+ *
+ * A division holds SEVERAL of these: a county votes in its own House
+ * district and in the statewide Senate race, so the UI lists them rather
+ * than picking one. `statewide` says whether the whole division voted in
+ * it, which is what a hover leads with.
+ *
+ * `leader` is the leader of the count we hold. It is not a winner, and
+ * `precincts_reporting` is null for North Carolina because the state
+ * publishes no denominator — so completeness is unknown and is never
+ * rendered as a percentage.
+ */
+interface CountyContest {
+  ocd_id: string;
+  county_name: string | null;
+  state: string;
+  office: string;
+  district: number | null;
+  tier: "county" | "contest";
+  statewide: boolean;
+  candidates: { name: string; party: string | null; votes: number;
+    percent: number | null }[];
+  total_votes: number;
+  leader: { name: string; party: string | null; votes: number;
+    percent: number | null } | null;
+  margin_votes: number | null;
+  margin_pct: number | null;
+  precincts_reporting: number | null;
+  precincts_reporting_available: boolean;
+  precincts_total: number | null;
+  precincts_with_votes: number | null;
+  reported_at: string | null;
+  source: string | null;
+}
+
 /** The contest happening now, as /race-2026 returns it per division. */
 interface RaceIncumbent {
   name: string;
@@ -429,6 +465,9 @@ export default function USElectionPage({
   // know what is on the ballot NOW, and the two must never be confused.
   const [race2026, setRace2026] = useState<Map<string, Race2026>>(new Map());
   const [earlyVote, setEarlyVote] = useState<Map<string, EarlyVote>>(new Map());
+  // ocd_id -> every contest we hold a count for in that division.
+  const [countyResults, setCountyResults] =
+    useState<Map<string, CountyContest[]>>(new Map());
   const [rows, setRows] = useState<Row[]>([]);
   const [selected, setSelected] = useState<Row | null>(null);
   const [detail, setDetail] = useState<Row | null>(null);
@@ -510,7 +549,8 @@ export default function USElectionPage({
   const playRef = useRef<number | null>(null);
   const [hoverInfo, setHoverInfo] = useState<
     { x: number; y: number; row: Row; total?: number; majorShare?: number;
-      top?: TopCandidate[]; race?: Race2026; early?: EarlyVote } | null>(null);
+      top?: TopCandidate[]; race?: Race2026; early?: EarlyVote;
+      counted?: CountyContest[] } | null>(null);
   const [newsTip, setNewsTip] = useState<{
     x: number; y: number; name: string; articles: number;
     people: string; tilt: number | null; headline: string;
@@ -660,6 +700,8 @@ export default function USElectionPage({
   useEffect(() => { race2026Ref.current = race2026; }, [race2026]);
   const earlyVoteRef = useRef(earlyVote);
   useEffect(() => { earlyVoteRef.current = earlyVote; }, [earlyVote]);
+  const countyResultsRef = useRef(countyResults);
+  useEffect(() => { countyResultsRef.current = countyResults; }, [countyResults]);
   // Only call a seat vacant when the officeholder feed actually loaded for
   // this office — otherwise "no holder" just means "not fetched".
   const hasHolderData = office === "us_house" || office === "us_senate";
@@ -2013,6 +2055,51 @@ export default function USElectionPage({
     return () => { alive = false; };
   }, [ready]);
 
+  /**
+   * The count, indexed by division.
+   *
+   * Fetched whole because it is small — one state, a few hundred rows —
+   * and a division holds several contests, so this is a map to an ARRAY.
+   * Counties and states both land here: a county's own slice and a state's
+   * statewide and district contests share the same shape.
+   */
+  useEffect(() => {
+    if (!ready) return;
+    let alive = true;
+    apiService({ method: "get", url: "/us-election/results-county?limit=4000" })
+      .then((r) => {
+        if (!alive) return;
+        const list = (r as { data?: { data?: { rows?: CountyContest[] } } })
+          ?.data?.data?.rows ?? [];
+        const byDivision = new Map<string, CountyContest[]>();
+        const push = (key: string, row: CountyContest) => {
+          const arr = byDivision.get(key) ?? [];
+          arr.push(row);
+          byDivision.set(key, arr);
+        };
+        for (const row of list) {
+          push(row.ocd_id, row);
+          // A House contest lives at .../state:nc/cd:7, so indexing only by
+          // its own id would leave a state hover showing the Senate race
+          // and silently omitting fourteen House races — while clicking
+          // through returned all fifteen. Index district contests under
+          // their parent state too, so hover and panel agree.
+          const parent = /^(ocd-division\/country:us\/state:[a-z]{2})\/cd:/
+            .exec(row.ocd_id);
+          if (parent) push(parent[1], row);
+        }
+        // Statewide first, then by district, matching the server's order so
+        // a hover and the panel never disagree about what leads.
+        for (const arr of byDivision.values()) {
+          arr.sort((a, b) => Number(b.statewide) - Number(a.statewide)
+            || (a.district ?? -1) - (b.district ?? -1));
+        }
+        setCountyResults(byDivision);
+      })
+      .catch(() => { if (alive) setCountyResults(new Map()); });
+    return () => { alive = false; };
+  }, [ready]);
+
   // ── fetch margins and push them in as feature state ──────────────────────
   useEffect(() => {
     const map = mapRef.current;
@@ -2136,6 +2223,9 @@ export default function USElectionPage({
         // county hover must not inherit its state's figure as if it were the
         // county's own.
         early: earlyVoteRef.current.get(id),
+        // The count, where we hold one. Empty for every division outside
+        // North Carolina, which is the normal case rather than an error.
+        counted: countyResultsRef.current.get(id),
       });
       if (hoverRef.current === id) return;
       clear();
@@ -2989,6 +3079,115 @@ export default function USElectionPage({
               unaffiliated voters outnumber its 738,750 registered
               Republicans, so a two-way bar would hide the second-largest
               bloc in the state. */}
+          {/* ── THE COUNT ──────────────────────────────────────────────
+              Leads the hover now that polls have closed: who is ahead and
+              by how much beats pre-election registration once there are
+              votes to report.
+
+              A division holds SEVERAL contests — a county votes in its own
+              House district and in the statewide Senate race — so this is
+              a list, not a single result. Hovering Wake County returns
+              four: the Senate race and three House districts it is split
+              across.
+
+              "Leads", never "wins". North Carolina publishes no
+              precincts-reporting denominator, so completeness is unknown;
+              precincts_with_votes is shown as itself and never converted
+              into a percent complete. We hold North Carolina and nothing
+              else, and a division with no rows renders nothing at all
+              rather than an empty results box. */}
+          {hoverInfo.counted?.length ? (
+            <>
+              <div className="mx-3 border-t border-white/5" />
+              <div className="bg-emerald-500/[0.05] px-3 py-2">
+                <div className="mb-1.5 flex items-baseline justify-between gap-2">
+                  <span className="font-mono text-[9px] uppercase tracking-[0.18em] text-emerald-300/80">
+                    The count
+                  </span>
+                  <span className="font-mono text-[9px] text-slate-500">
+                    {hoverInfo.counted[0].reported_at
+                      ? hoverInfo.counted[0].reported_at.slice(5, 16).replace("T", " ")
+                      : "—"}
+                  </span>
+                </div>
+                {hoverInfo.counted.slice(0, 4).map((ct) => {
+                  const L = ct.leader;
+                  const runner = ct.candidates[1];
+                  const label = ct.office === "us_senate" ? "U.S. Senate"
+                    : ct.office === "us_house"
+                      ? `U.S. House ${ct.district ?? ""}`.trim()
+                      : ct.office === "governor" ? "Governor" : ct.office;
+                  return (
+                    <div key={`${ct.office}-${ct.district ?? "-"}`} className="mb-1.5 last:mb-0">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-slate-400">
+                          {label}
+                          {ct.statewide && (
+                            <span className="ml-1 text-emerald-400/70">statewide</span>
+                          )}
+                        </span>
+                        <span className="font-mono text-[9px] tabular-nums text-slate-500">
+                          {ct.total_votes.toLocaleString()} counted
+                        </span>
+                      </div>
+                      {L && (
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="truncate text-[11px] text-slate-100">
+                            <span className={`mr-1 inline-block h-1.5 w-1.5 rounded-full align-middle ${
+                              L.party === "DEM" ? "bg-blue-500"
+                                : L.party === "REP" ? "bg-red-500" : "bg-slate-400"}`} />
+                            {L.name}
+                            <span className="ml-1 text-slate-500">leads</span>
+                          </span>
+                          <span className="shrink-0 font-mono text-[10px] tabular-nums text-slate-300">
+                            {L.votes.toLocaleString()}
+                            {L.percent != null && (
+                              <span className="ml-1 text-slate-500">{L.percent}%</span>
+                            )}
+                          </span>
+                        </div>
+                      )}
+                      {runner && (
+                        <div className="flex items-baseline justify-between gap-2 opacity-70">
+                          <span className="truncate text-[10px] text-slate-400">
+                            <span className={`mr-1 inline-block h-1.5 w-1.5 rounded-full align-middle ${
+                              runner.party === "DEM" ? "bg-blue-500"
+                                : runner.party === "REP" ? "bg-red-500" : "bg-slate-400"}`} />
+                            {runner.name}
+                          </span>
+                          <span className="shrink-0 font-mono text-[10px] tabular-nums text-slate-400">
+                            {runner.votes.toLocaleString()}
+                            {runner.percent != null && (
+                              <span className="ml-1 text-slate-500">{runner.percent}%</span>
+                            )}
+                          </span>
+                        </div>
+                      )}
+                      {ct.margin_votes != null && (
+                        <div className="font-mono text-[9px] text-slate-500">
+                          margin {ct.margin_votes.toLocaleString()}
+                          {ct.margin_pct != null && ` · ${ct.margin_pct} pts`}
+                          {ct.precincts_with_votes != null && ct.precincts_total != null
+                            && ` · ${ct.precincts_with_votes}/${ct.precincts_total} precincts with votes`}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {hoverInfo.counted.length > 4 && (
+                  <div className="font-mono text-[9px] text-slate-500">
+                    +{hoverInfo.counted.length - 4} more contests — click to open
+                  </div>
+                )}
+                <div className="mt-1 text-[9px] leading-snug text-slate-500">
+                  Leading in the count we hold. Not a called race — this state
+                  publishes no precincts-reporting total, so how much is left
+                  is unknown. Unofficial; certified results will differ.
+                </div>
+              </div>
+            </>
+          ) : null}
+
           {hoverInfo.early?.total ? (
             <>
               <div className="mx-3 border-t border-white/5" />
